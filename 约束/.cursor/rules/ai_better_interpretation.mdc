@@ -1,0 +1,120 @@
+---
+description: 对话涉代码时强制双语——每个代码名词须附中文业务解读，产品可读，表述准确不可误导（用于每一次和ai的对话）
+alwaysApply: true
+---
+
+# 代码名词双语解读（全局约束）
+
+**适用范围**：本仓库内**每一次**与 AI 的对话。只要回复中出现代码相关名词（类、方法、常量、标志位、配置 key、埋点名等），即适用本规则——不限于「功能解读」场景。
+
+**读者**：默认同时有**产品经理**与**开发**在阅读。产品同事应能**不读源码**即理解你在说什么；开发同事应能**对照源码**定位实现。
+
+**关联规则**：功能专项解读另遵守 `@cursor-feature-interpret`；本规则为**所有对话的底线**，二者同时生效。
+
+---
+
+## 1. 强制格式
+
+### 1.1 首次出现（必须）
+
+代码名词**在对话中第一次出现**时，须用下列格式之一（任选，但信息不得缺）：
+
+| 格式 | 示例 |
+|------|------|
+| **括号释义** | `AdRemoteConfigManager`（**广告远程配置管理器**：进程内当前生效的广告位 JSON 与开关） |
+| **表格三列** | 代码锚点 \| 中文业务含义 \| 用户/系统效果 |
+| **「代码 — 含义」** | `commitAbFace` — **首次对外公布 A/B 面并切换广告方案** |
+
+**禁止**单独抛出 `AttributionManager`、`configAppliedThisProcess` 等而不解释。
+
+### 1.2 后续出现
+
+- 同一对话内已释义过的名词，后文可简称，但**不得改变含义**。
+- 若后文引入**新条件**（如「未 commit 时」「超时后」），须重新点明该条件，不可让读者默认仍适用旧结论。
+
+### 1.3 一句话业务含义的要求
+
+- ≤30 字，说**业务在干什么**，不是翻译类名音节。
+- **反例**：`AbSettlementCoordinator` → 「AB 结算协调器」（仅复述类名）
+- **正例**：`AbSettlementCoordinator` → 「冷启时并行跑归因轨与 Firebase 轨，并在就绪后公布 A/B 面」
+
+---
+
+## 2. 准确表述铁律（禁止误导）
+
+### 2.1 禁止无条件的「总是 / 必定 / 永远」
+
+写行为结论前，**必须先核对代码里的条件分支**（`if`、`when`、标志位、时间点）。下列写法**禁止**除非代码确无分支：
+
+| 禁止（易误导） | 应改为（准确） |
+|----------------|----------------|
+| 开屏**必定**用 A 面默认配置 | 开屏**不等待** AB commit；**请求瞬间**用 `AdRemoteConfigManager` 里**当时已生效**的配置；commit **前**多为 A，commit **后**可能为 B |
+| **永远**不阻塞启动页 | **不专门等待**某任务；但启动页仍等 UMP、开屏 load 等**自身**步骤 |
+| FC 超时**就没有**远程配置 | FC 8s 超时 → `fetchOk=false`，**仍**用**缓存 RC** 并 `onFirebaseFetchCompleted` |
+| 未判面就**一定是** A 面体验 | 未 commit 前 `currentIsModeB()` 为 false（**对外暂定 A**）；开屏配置取决于**当时是否已 apply B 方案** |
+
+### 2.2 并行任务须写清「时刻」
+
+多个任务并行时，结论必须带**时间点或条件**，例如：
+
+- 「**在 `loadSplash` 调用时**若 `configAppliedThisProcess==false`……」
+- 「**若 UMP 较慢、AB 已 commit 为 B**，则开屏可能用 B 方案 JSON……」
+
+**禁止**把「并行中的某一时刻的常态」写成「全流程恒定行为」。
+
+### 2.3 「不阻塞」的准确含义
+
+说「X 不阻塞 Y」时，必须同时说明：
+
+1. **Y 不等 X 完成**（无 `await`、无闸门依赖）
+2. **Y 自己在等什么**（若有）
+3. **X 完成后是否会事后改变** Y 已用的数据（续作 / 监听 / 配置刷新）
+
+示例：
+
+> `StartActivity` **不阻塞等待** `AppAdsBootstrap.commitAbFace`；但冷启仍**阻塞等待 UMP 同意**。开屏 `loadAd` 使用调用瞬间 `AdRemoteConfigManager` 中的配置——若此时 AB 已 commit 为 B，则用 B 方案，**并非必定 A**。
+
+### 2.4 不确定时
+
+- 未读代码不得写死结论；标「**待核对代码**」或先读再答。
+- 禁止用「一般来说」「通常」掩盖**本项目中存在的分支**。
+
+---
+
+## 3. 常见代码名词速查（本项目，解读时优先复用）
+
+| 代码锚点 | 中文业务含义 |
+|----------|-------------|
+| `AppAdsBootstrap` | 广告与 A/B 面引导总控：公布面别、apply 广告方案、`canShowAd` |
+| `AbSettlementCoordinator` | 冷启 AB 结算协调：FC 轨 ∥ 归因轨，就绪后 commit |
+| `AttributionManager` | 安装来源归因：拉 Install Referrer、阶段1/2 重试、终局打点 |
+| `Mode2Utils` | 自然 A/B 判定：RC 总开关 + referrer/GP 子项检查 |
+| `AdRemoteConfigManager` | **进程内当前生效**的广告位配置（JSON 解析结果，非持久「面别」本身） |
+| `AdRemoteConfigBridge` | 把 Firebase / assets 的 `ad_config_a/b` 写入 `AdRemoteConfigManager` |
+| `commitAbFace` | 首次对外公布 A/B 面，并 `applyRemoteConfigCore` |
+| `configAppliedThisProcess` | 本进程是否已完成 AB 面 commit |
+| `currentIsModeB()` | 对外是否 B 面；**未 commit 前恒 false** |
+| `onFirebaseFetchCompleted` | FC 拉取结束（含超时）后 apply 广告/通知 RC |
+| `effectiveModeB` | apply 配置时是否按 B 方案：`commit && isModeB` |
+| `MonetizationKit.enableFor` | 某广告位是否允许请求（SDK、远程 JSON、限额） |
+| `canShowAd` | 是否可展示：含 B 专属位须 commit 且为 B |
+
+---
+
+## 4. 对话自检（涉代码时 mentally check）
+
+回复发送前自检：
+
+- [ ] 每个**首次出现**的代码名词都有中文业务含义
+- [ ] 无「必定/总是/永远」除非已核对全部分支
+- [ ] 并行逻辑写了**条件或时刻**，未把某一时刻说成全程
+- [ ] 「不阻塞」已说明 Y 实际还在等什么、X 完成后是否续作
+- [ ] 产品同事只看中文释义能否理解，不被「默认 A」等简写误导
+
+---
+
+## 5. 与 `ai_rules_everytimes` 的关系
+
+- `ai_rules_everytimes` 要求回复首行显示 `📌 已启用约束：ai_rules_everytimes`
+- 本规则**不替代**该标识；涉代码时**额外**遵守本节双语与准确表述要求
+- 若与 `cursor-feature-interpret` 冲突：功能解读取更严者；日常问答至少遵守本规则 §1～§2
