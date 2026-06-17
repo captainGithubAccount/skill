@@ -1,0 +1,11 @@
+// settings.gradle 无需新增模块；app/build.gradle.kts 增加：
+
+dependencies {
+    // play-services-ads 含 com.google.android.ump.*
+    implementation(libs.google.ads)
+}
+
+// AndroidManifest.xml application 内：
+// <meta-data
+//     android:name="com.google.android.gms.ads.APPLICATION_ID"
+//     android:value="ca-app-pub-xxxxxxxx~yyyyyyyyyy"/>

@@ -1,0 +1,106 @@
+package {promo_package}.internal
+
+import android.content.Context
+import com.adjust.sdk.Adjust
+import com.adjust.sdk.AdjustAdRevenue
+import com.adjust.sdk.AdjustConfig
+import com.adjust.sdk.AdjustEvent
+import com.adjust.sdk.LogLevel
+import com.google.android.gms.ads.AdValue
+import com.google.android.gms.ads.ResponseInfo
+import {promo_package}.BuildConfig
+
+/**
+ * Adjust SDK 统一工具：初始化 + AdMob 广告收入回传。
+ *
+ * ## 配置（编译期注入）
+ * 在工程根目录 local.properties 填写 Adjust 应用 Token：
+ * ```
+ * adjust.app.token=你的AdjustAppToken
+ * ```
+ * 由 BuildConfig.ADJUST_APP_TOKEN 读取（见库模块 build.gradle.kts）。
+ *
+ * ## 接入
+ * 1. Application.onCreate 中调用 [init]（须在 AdMob 展示前完成）
+ * 2. 各广告 OnPaidEventListener 中调用 [trackAdMobPaidEvent]
+ *
+ * Adjust Android SDK v5 已内置 Activity 生命周期处理，无需在 Activity 中手动 onResume/onPause。
+ */
+object AdjustSdkUtil {
+
+    private const val TAG = "AdjustSdkUtil"
+
+    /** Adjust SDK v5 广告收入来源：AdMob */
+    private const val AD_REVENUE_SOURCE_ADMOB = "admob_sdk"
+
+    /** SDK 是否已成功初始化（token 有效且 initSdk 成功） */
+    @Volatile
+    var isReady: Boolean = false
+        private set
+
+    /**
+     * 初始化 Adjust。重复调用时若已成功则直接返回。
+     *
+     * @param debug true 使用 Sandbox 环境并打开详细日志
+     */
+    @Synchronized
+    fun init(context: Context, debug: Boolean) {
+        if (isReady) return
+
+        val appToken = BuildConfig.ADJUST_APP_TOKEN.trim()
+        if (appToken.isEmpty()) {
+            PromoLog.e(TAG, "adjust.app.token 未配置，跳过 Adjust.initSdk（请在 local.properties 填写）")
+            return
+        }
+
+        runCatching {
+            val environment =
+                if (debug) AdjustConfig.ENVIRONMENT_SANDBOX else AdjustConfig.ENVIRONMENT_PRODUCTION
+            val config = AdjustConfig(context.applicationContext, appToken, environment)
+            config.setLogLevel(if (debug) LogLevel.VERBOSE else LogLevel.SUPPRESS)
+            Adjust.initSdk(config)
+            isReady = true
+            PromoLog.i(TAG, "Adjust.initSdk ok env=$environment")
+        }.onFailure {
+            isReady = false
+            PromoLog.e(TAG, "Adjust.initSdk failed: ${it.message}")
+            it.printStackTrace()
+        }
+    }
+
+    /**
+     * 上报 Adjust 自定义事件（事件 token 在 Adjust 控制台创建）。
+     */
+    fun trackEvent(eventToken: String) {
+        if (!isReady) return
+        runCatching {
+            Adjust.trackEvent(AdjustEvent(eventToken))
+        }.onFailure {
+            PromoLog.e(TAG, "trackEvent failed: ${it.message}")
+        }
+    }
+
+    /**
+     * AdMob 付费展示收益回传 Adjust（与 Google AdMob 官方示例一致）。
+     */
+    fun trackAdMobPaidEvent(adValue: AdValue, responseInfo: ResponseInfo?) {
+        if (!isReady) {
+            if (BuildConfig.ADJUST_APP_TOKEN.isBlank()) {
+                PromoLog.e(TAG, "skip trackAdRevenue: local.properties 未配置 adjust.app.token")
+            } else {
+                PromoLog.e(TAG, "skip trackAdRevenue: Adjust SDK 未初始化")
+            }
+            return
+        }
+
+        val valueMicros = adValue.valueMicros
+        val currencyCode = adValue.currencyCode
+        val loadedAdapterResponseInfo = responseInfo?.loadedAdapterResponseInfo
+        val adSourceName = loadedAdapterResponseInfo!!.adSourceName
+        val adRevenue = AdjustAdRevenue(AD_REVENUE_SOURCE_ADMOB)
+        adRevenue.setRevenue(valueMicros / 1_000_000.0, currencyCode)
+        adRevenue.setAdRevenueNetwork(adSourceName)
+        Adjust.trackAdRevenue(adRevenue)
+        PromoLog.i(TAG, "trackAdRevenue ok micros=$valueMicros currency=$currencyCode network=$adSourceName")
+    }
+}

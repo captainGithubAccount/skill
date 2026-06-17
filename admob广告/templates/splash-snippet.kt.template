@@ -1,0 +1,35 @@
+// 开屏广告 — PDF 金样：SplashLaunchPipeline + SplashActivity
+// 须 isInit && isUmpResolved（canShowAd / enableFor）；冷启 UMP 见 ump skill
+
+private var splashAd: Ad? = null
+
+private suspend fun preloadSplashIfEnabled(activity: FragmentActivity) {
+    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) return
+    activity.preloadAdAwait(AdSense.LOADING_SPLASH, "Loading开屏预加载")
+}
+
+private suspend fun loadSplashIfEnabled(activity: FragmentActivity) {
+    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) return
+    splashAd = activity.loadAd(
+        AdSense.LOADING_SPLASH,
+        timeoutMs = 10_000L,
+        scene = "冷启开屏-load",
+    )
+}
+
+private suspend fun showSplashOrNavigate() {
+    val ad = splashAd
+    if (ad != null) {
+        ad.show(this) { onNavigateNext() }
+    } else {
+        onNavigateNext()
+    }
+}
+
+private fun onNavigateNext() {
+    splashAd?.destroy()
+    splashAd = null
+    // LanguageActivity 或 MainActivity
+}
+
+// UMP 通过后批量预加载（AdPreloadCoordinator.preloadAfterLoading）

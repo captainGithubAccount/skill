@@ -1,0 +1,7 @@
+// Application.onCreate() 内，VsaveV3FeatureKit.init(this) 之后
+
+import com.isi.monetization.utils.AdEventUtils  // 或项目广告模块等价类
+
+AdEventUtils.facebookRevenueReporter = { revenue, _ ->
+    VsaveV3FeatureKit.reportFacebookPaidAdRevenue(revenue)
+}

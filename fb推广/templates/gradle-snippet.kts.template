@@ -1,0 +1,30 @@
+// gradle/libs.versions.toml
+[versions]
+facebook = "latest.release"  # 建议锁定具体版本号
+
+[libraries]
+other-facebook = { group = "com.facebook.android", name = "facebook-android-sdk", version.ref = "facebook" }
+
+// app/build.gradle.kts
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val mFbAppId = localProperties.getProperty("FB_APP_ID") ?: ""
+val mFbClientToken = localProperties.getProperty("FB_CLIENT_TOKEN") ?: ""
+
+android {
+    defaultConfig {
+        manifestPlaceholders["FB_APP_ID"] = mFbAppId
+        manifestPlaceholders["FB_CLIENT_TOKEN"] = mFbClientToken
+        buildConfigField("String", "FB_APP_ID", "\"$mFbAppId\"")
+        buildConfigField("String", "FB_CLIENT_TOKEN", "\"$mFbClientToken\"")
+    }
+}
+dependencies {
+    implementation(libs.other.facebook)
+}
+
+// local.properties（不入库）
+// FB_APP_ID=你的应用编号
+// FB_CLIENT_TOKEN=你的ClientToken

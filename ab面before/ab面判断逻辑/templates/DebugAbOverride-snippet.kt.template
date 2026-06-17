@@ -1,0 +1,40 @@
+// 嵌入 {app_package}.util.debug.DebugAbOverride（仅 Debug 包生效）
+
+object DebugAbOverride {
+
+    /** 编译期强制：NORMAL | FORCE_A | FORCE_B；非 NORMAL 时优先级最高 */
+    @JvmField
+    val CODE_OVERRIDE_MODE: Mode = Mode.NORMAL
+
+    enum class Mode { NORMAL, FORCE_A, FORCE_B }
+
+    fun isCodeOverrideActive(): Boolean =
+        BuildConfig.DEBUG && CODE_OVERRIDE_MODE != Mode.NORMAL
+
+    fun get(): Mode {
+        if (!BuildConfig.DEBUG) return Mode.NORMAL
+        if (isCodeOverrideActive()) return CODE_OVERRIDE_MODE
+        val raw = MMKV.defaultMMKV().decodeInt(Config.KEY_DEBUG_AB_OVERRIDE, Mode.NORMAL.ordinal)
+        return Mode.entries.getOrElse(raw) { Mode.NORMAL }
+    }
+
+    /** naturalModeB → 最终是否 B 面（Release 直接返回 natural） */
+    fun resolveModeB(naturalIsModeB: Boolean): Boolean {
+        if (!BuildConfig.DEBUG) return naturalIsModeB
+        return when (get()) {
+            Mode.FORCE_A -> false
+            Mode.FORCE_B -> true
+            Mode.NORMAL -> naturalIsModeB
+        }
+    }
+
+    fun set(mode: Mode) {
+        if (!BuildConfig.DEBUG) return
+        MMKV.defaultMMKV().encode(Config.KEY_DEBUG_AB_OVERRIDE, mode.ordinal)
+        if (mode == Mode.NORMAL) Mode2Utils.resetCachedCheckForDebug()
+    }
+}
+
+// AppAdsBootstrap：
+// val naturalModeB = Mode2Utils.initMode2AndGet(context)
+// isModeB = DebugAbOverride.resolveModeB(naturalModeB)

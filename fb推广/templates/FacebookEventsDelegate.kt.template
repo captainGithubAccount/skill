@@ -1,0 +1,104 @@
+// 目标：{app_package}/util/v3/delegate/FacebookEventsDelegate.kt（包名按工程调整）
+
+package {app_package}.util.v3.delegate
+
+import android.app.Application
+import android.os.Bundle
+import {app_package}.data.global.Config
+import {app_package}.util.AppLogUtils
+import com.facebook.FacebookSdk
+import com.facebook.appevents.AppEventsConstants
+import com.facebook.appevents.AppEventsLogger
+import {app_package}.BuildConfig
+import com.tencent.mmkv.MMKV
+import java.util.Calendar
+
+/**
+ * Meta App Events（Facebook 投放优化专用，非变现 SDK）。
+ */
+internal object FacebookEventsDelegate {
+
+    private const val TAG = "FbAppEvents"
+    private const val EVENT_AD_D0_REVENUE = "ad_d0_revenue"
+    private const val EVENT_AD_REVENUE = "ad_revenue"
+    private const val CURRENCY_USD = "USD"
+
+    private var logger: AppEventsLogger? = null
+
+    /** 初始化 Meta SDK 并激活 App Events 会话（支撑安装归因）。 */
+    fun init(application: Application) {
+        runCatching {
+            FacebookSdk.setApplicationId(BuildConfig.FB_APP_ID)
+            FacebookSdk.setClientToken(BuildConfig.FB_CLIENT_TOKEN)
+            FacebookSdk.sdkInitialize(application)
+            FacebookSdk.setAutoInitEnabled(true)
+            FacebookSdk.fullyInitialize()
+            logger = AppEventsLogger.newLogger(application)
+            AppEventsLogger.activateApp(application)
+            AppLogUtils.iTag(TAG, "Facebook SDK 已初始化并 activateApp（App Events / 安装归因）")
+        }.onFailure {
+            AppLogUtils.eTag(TAG, "Facebook 初始化失败: ${it.message}")
+        }
+    }
+
+    /** 广告展示产生收益时统一上报。 */
+    fun reportPaidAdRevenue(value: Double) {
+        if (value <= 0.0) {
+            AppLogUtils.iTag(TAG, "收益<=0，跳过 Meta 上报 value=$value")
+            return
+        }
+        logAdImpressionRevenue(value)
+        logAdRevenue(value)
+        if (isInstallCalendarDay()) {
+            logAdD0Revenue(value)
+        } else {
+            AppLogUtils.iTag(TAG, "非安装当日，跳过 ad_d0_revenue value=$value")
+        }
+    }
+
+    fun logAdImpressionRevenue(value: Double) {
+        logRevenue(AppEventsConstants.EVENT_NAME_AD_IMPRESSION, value)
+    }
+
+    fun logAdD0Revenue(value: Double) {
+        logRevenue(EVENT_AD_D0_REVENUE, value)
+    }
+
+    fun logAdRevenue(value: Double) {
+        logRevenue(EVENT_AD_REVENUE, value)
+    }
+
+    /** 是否为安装当日（自然日，本地时区）。 */
+    fun isInstallCalendarDay(): Boolean {
+        val installMs = MMKV.defaultMMKV()!!.decodeLong(Config.KEY_FIRST_LAUNCH_APP_TS, 0L)
+        if (installMs <= 0L) {
+            AppLogUtils.iTag(TAG, "未记录安装时刻，视为安装当日")
+            return true
+        }
+        val installCal = Calendar.getInstance().apply { timeInMillis = installMs }
+        val nowCal = Calendar.getInstance()
+        return installCal.get(Calendar.YEAR) == nowCal.get(Calendar.YEAR) &&
+            installCal.get(Calendar.DAY_OF_YEAR) == nowCal.get(Calendar.DAY_OF_YEAR)
+    }
+
+    private fun logRevenue(eventName: String, value: Double) {
+        runCatching {
+            val log = logger ?: run {
+                AppLogUtils.eTag(TAG, "logger 未就绪，跳过事件 $eventName")
+                return
+            }
+            val params = Bundle().apply {
+                putDouble(AppEventsConstants.EVENT_PARAM_VALUE_TO_SUM, value)
+                putString(AppEventsConstants.EVENT_PARAM_CURRENCY, CURRENCY_USD)
+            }
+            if (eventName == AppEventsConstants.EVENT_NAME_AD_IMPRESSION) {
+                log.logEvent(AppEventsConstants.EVENT_NAME_AD_IMPRESSION, params)
+            } else {
+                log.logEvent(eventName, params)
+            }
+            AppLogUtils.iTag(TAG, "已上报 Meta 事件=$eventName value=$value currency=$CURRENCY_USD")
+        }.onFailure {
+            AppLogUtils.eTag(TAG, "Meta 上报失败 event=$eventName: ${it.message}")
+        }
+    }
+}

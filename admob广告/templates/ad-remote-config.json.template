@@ -1,0 +1,48 @@
+{
+  "version": "1.0.0",
+  "scheme": "A",
+  "scheme_desc": "审核包：仅 loading 开屏 + enter/back 插屏；B 面全量见 Firebase pdf_ad_config_b",
+  "app_level_limit": {
+    "max_impressions_per_day": 30,
+    "max_clicks_per_day": 10,
+    "expire_splash_default_minutes": 232,
+    "expire_inter_default_minutes": 52,
+    "expire_native_default_minutes": 52,
+    "background_dismiss_ms": 200,
+    "enter_inter_show_probability": 50,
+    "back_inter_show_probability": 50,
+    "nav_click_show_inter_interval": 1
+  },
+  "ads": [
+    {
+      "ad_name": "loading_splash",
+      "ad_sense": 1,
+      "ad_type": "splash",
+      "ad_id": "ca-app-pub-3940256099942544/9257395921",
+      "priority": 1,
+      "enable": true,
+      "expire_minutes": 232,
+      "request_timeout_ms": 8000
+    },
+    {
+      "ad_name": "enter_interstitial",
+      "ad_sense": 5,
+      "ad_type": "interstitial",
+      "ad_id": "ca-app-pub-3940256099942544/1033173712",
+      "priority": 5,
+      "enable": true,
+      "expire_minutes": 52,
+      "request_timeout_ms": 8000
+    },
+    {
+      "ad_name": "back_interstitial",
+      "ad_sense": 6,
+      "ad_type": "interstitial",
+      "ad_id": "ca-app-pub-3940256099942544/1033173712",
+      "priority": 6,
+      "enable": true,
+      "expire_minutes": 52,
+      "request_timeout_ms": 8000
+    }
+  ]
+}

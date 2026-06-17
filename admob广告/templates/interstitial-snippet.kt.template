@@ -1,0 +1,34 @@
+// 插屏广告 — PDF 金样
+// 简单页：preload + showAd
+// 路由页：AdNavigationCoordinator.navigateWithEnterAd / finishWithBackAd
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
+        preloadAd(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-预加载插屏")
+    }
+}
+
+private fun onConfirmLanguage() {
+    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
+        launchMain()
+        return
+    }
+    showAd(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认插屏") {
+        launchMain()  // 无论是否展示都继续业务
+    }
+}
+
+// enter 插屏（二级页跳转）
+AdNavigationCoordinator.navigateWithEnterAd(
+    activity = this,
+    intent = Intent(this, TargetActivity::class.java),
+    scene = "文件页-enter",
+)
+
+// back 插屏（离开二级页）
+AdNavigationCoordinator.finishWithBackAd(
+    activity = this,
+    scene = "文件页-back",
+    onFinished = { finish() },
+)

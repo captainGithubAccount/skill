@@ -1,0 +1,16 @@
+// 合并进 AdEventUtils.loadAdLoadedReport（与 Adjust 并列，勿删除 Adjust 调用）
+
+import com.isi.telemetry.AppsFlyerTracker
+import com.isi.monetization.utils.AdTracker
+
+fun loadAdLoadedReport(adValue: AdValue, responseInfo: ResponseInfo?) {
+    AdjustSdkUtil.trackAdMobPaidEvent(adValue, responseInfo)
+    AppsFlyerTracker.logAdMobPaidEvent(adValue, responseInfo)
+
+    val adUnitId = responseInfo?.loadedAdapterResponseInfo?.adUnitId.orEmpty()
+    val adSourceName = responseInfo?.loadedAdapterResponseInfo?.adSourceName
+    if (adUnitId.isNotBlank()) {
+        AdTracker.rememberAdNetwork(adUnitId, adSourceName)
+    }
+    // ... 原有 Firebase paid_ad_impression、Meta facebookRevenueReporter 等
+}

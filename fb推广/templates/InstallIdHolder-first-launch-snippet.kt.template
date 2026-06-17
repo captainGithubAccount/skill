@@ -1,0 +1,28 @@
+// 合并到 {app_package}/util/mode2/InstallIdHolder.kt（或等价「安装 id」类）
+
+// Config.kt 增加：
+// /** 本机首次安装/启动墙钟时间（毫秒），供 Meta ad_d0_revenue 判断安装自然日 */
+// const val KEY_FIRST_LAUNCH_APP_TS = "KEY_FIRST_LAUNCH_APP_TS"
+
+fun obtainForBootstrap(): Pair<String, Boolean> {
+    val mmkv = MMKV.defaultMMKV()!!
+    val id = ensure()
+    ensureFirstLaunchTimestamp(mmkv)  // ← 新增
+    // ...
+}
+
+fun ensure(): String {
+    val mmkv = MMKV.defaultMMKV()!!
+    val existing = mmkv.decodeString(Config.KEY_INSTALL_ID, null).orEmpty()
+    if (existing.isNotBlank()) return existing
+    val id = UUID.randomUUID().toString()
+    mmkv.encode(Config.KEY_INSTALL_ID, id)
+    ensureFirstLaunchTimestamp(mmkv)  // ← 新增
+    return id
+}
+
+/** 记录首次安装/首次启动墙钟时间（仅写入一次）。 */
+private fun ensureFirstLaunchTimestamp(mmkv: MMKV) {
+    if (mmkv.decodeLong(Config.KEY_FIRST_LAUNCH_APP_TS, 0L) > 0L) return
+    mmkv.encode(Config.KEY_FIRST_LAUNCH_APP_TS, System.currentTimeMillis())
+}

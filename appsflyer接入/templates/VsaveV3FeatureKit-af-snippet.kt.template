@@ -1,0 +1,7 @@
+// 进程进入前台时（ProcessLifecycleOwner.onStart 或等价门面）：
+
+import com.isi.telemetry.DeferredAttributionBridge
+
+fun onEnterForeground(context: Context) {
+    DeferredAttributionBridge.onAppForeground(context)
+}

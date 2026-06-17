@@ -1,0 +1,8 @@
+        <!-- AppsFlyer 卸载衡量：需 FCM token -->
+        <service
+            android:name=".push.AppsFlyerFcmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>

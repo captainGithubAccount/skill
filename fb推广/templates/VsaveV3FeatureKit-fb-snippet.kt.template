@@ -1,0 +1,12 @@
+// 合并到应用门面类（参考 VsaveV3FeatureKit）
+
+import {app_package}.util.v3.delegate.FacebookEventsDelegate
+
+fun init(application: Application) {
+    // ... 其它 init
+    FacebookEventsDelegate.init(application)
+}
+
+/** Meta 广告收益三联上报（Ad_Impression + ad_revenue；安装日额外 ad_d0_revenue）。 */
+fun reportFacebookPaidAdRevenue(value: Double) =
+    FacebookEventsDelegate.reportPaidAdRevenue(value)

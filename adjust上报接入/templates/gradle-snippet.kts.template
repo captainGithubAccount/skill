@@ -1,0 +1,42 @@
+// ========== gradle/libs.versions.toml ==========
+// [versions]
+// adjustSdk = "5.4.6"
+//
+// [libraries]
+// other-adjustSdk = { group = "com.adjust.sdk", name = "adjust-android", version.ref = "adjustSdk" }
+
+
+// ========== 库模块 build.gradle.kts（PromoCore / track 等）==========
+import java.util.Properties
+
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
+/** 从 local.properties 读取配置项 */
+fun p(key: String, default: String = ""): String {
+    val raw = localProperties.getProperty(key, default) ?: default
+    return raw.trim().takeIf { it.isNotEmpty() } ?: default
+}
+
+android {
+    defaultConfig {
+        // Adjust App Token（local.properties: adjust.app.token）
+        buildConfigField("String", "ADJUST_APP_TOKEN", "\"${p("adjust.app.token")}\"")
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+}
+
+dependencies {
+    implementation(libs.other.adjustSdk)
+    // Adjust 安装来源归因依赖
+    implementation("com.android.installreferrer:installreferrer:2.2")
+    implementation(libs.google.firebaseAnalytics)
+}
+
+
+// ========== local.properties（不入库）==========
+// adjust.app.token=你的AdjustAppToken

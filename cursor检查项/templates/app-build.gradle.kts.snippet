@@ -1,0 +1,22 @@
+/**
+ * Cursor 代码审查：在 Kotlin DSL 中显式注册，确保 Android Studio Gradle 面板可检索。
+ * 检查逻辑见 lwj_work_by_gradle/qd_work_tasks/gradle/cursorTaskRules.gradle。
+ */
+tasks.register("cursorCodeReviewCheck") {
+    group = "cursor"
+    description = "Manual Cursor task- rule check (warnings only, no packaging)"
+    dependsOn("processDebugMainManifest")
+    doLast {
+        @Suppress("UNCHECKED_CAST")
+        val runChecks =
+            project.extensions.extraProperties.get("runCursorRuleChecks") as groovy.lang.Closure<*>
+        runChecks.call(true, "cursorCodeReviewCheck")
+    }
+}
+
+/** verification 分组别名，便于在 Gradle 面板 verification 下也能搜到 */
+tasks.register("verifyCursorRules") {
+    group = "verification"
+    description = "Same as cursorCodeReviewCheck (Cursor task- rules)"
+    dependsOn("cursorCodeReviewCheck")
+}

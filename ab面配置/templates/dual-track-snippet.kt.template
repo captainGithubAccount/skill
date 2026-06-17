@@ -1,0 +1,29 @@
+// AbSettlementCoordinator — PDF 金样双轨核心
+
+fun startSettlement(context: Context, scope: CoroutineScope) {
+    DebugAbOverride.applyForcedLockIfNeeded()
+    scope.launch(Dispatchers.IO) { runFcFetchAndApply(context) }  // FC 轨
+    if (Mode2Utils.isMode2Resolved()) {
+        // 老用户：等 FC → Mode2 → commit → 阶段2
+        scope.launch(Dispatchers.IO) { /* awaitFc → resolve → tryCommit → extended */ }
+        return
+    }
+    scope.launch(Dispatchers.IO) { runAbSettlementAsync(context, scope) }  // AB 轨
+}
+
+// FC 轨：PDF 最多 3 次，单次 withTimeoutOrNull(8000)
+private suspend fun runFcFetchAndApply(context: Context) {
+    for (attempt in 1..FC_FETCH_MAX_ATTEMPTS) {
+        delay(FC_FETCH_RETRY_DELAYS_MS[attempt - 1])
+        val result = withTimeoutOrNull(8_000L) {
+            AppRemoteConfig.fetchAndActivateWithDetail()
+        } ?: FetchResult(success = false, errorMessage = "timeout")
+        if (result.success) break
+    }
+    fcReady = true
+    AppAdsBootstrap.onFirebaseFetchCompleted(context)
+}
+
+// commit 后：B 面且远程 B 未生效 → scheduleBRemoteConfigRetryIfNeeded
+
+// AB 轨：AttributionManager.init → awaitFcReadyForMode2(30s) → Mode2 → commit → 阶段2

@@ -1,0 +1,21 @@
+<!-- 启动页 layout 片段：UMP 等待转圈与底部进度条互斥 -->
+<!-- 控件 id 可按项目命名；逻辑见 SplashLaunchPipeline / StartActivity template -->
+
+<!-- 底部横向进度条（UMP 等待时 GONE） -->
+<ProgressBar
+    android:id="@+id/splash_progress"
+    style="@style/Widget.AppCompat.ProgressBar.Horizontal"
+    android:layout_width="260dp"
+    android:layout_height="wrap_content"
+    android:visibility="visible" />
+
+<!-- UMP 等待转圈（欧盟无缓存时 VISIBLE，隐藏进度条） -->
+<ProgressBar
+    android:id="@+id/splash_ump_wait"
+    android:layout_width="48dp"
+    android:layout_height="48dp"
+    android:indeterminateTint="@color/ump_wait_tint"
+    android:visibility="gone" />
+
+<!-- colors.xml: <color name="ump_wait_tint">#3D7CFD</color> -->
+<!-- 显示条件：!isHotStart && AdConsentManager.willRunUmpGather(context) -->

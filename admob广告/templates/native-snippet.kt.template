@@ -1,0 +1,26 @@
+// 原生广告 — PDF 金样：LanguageActivity / FileFragment 等
+// 1. 布局中准备 FrameLayout（如 R.id.native_ad_container）
+// 2. 替换 AdSense；B 专属位须 canShowAd
+
+override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
+        preloadAd(AdSense.LANGUAGE_NATIVE, scene = "语言页-预加载原生")
+    }
+}
+
+override fun onResume() {
+    super.onResume()
+    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
+        hideNativeAdContainer(binding.nativeAdContainer)
+        return
+    }
+    bindNativeAd(
+        sense = AdSense.LANGUAGE_NATIVE,
+        container = binding.nativeAdContainer,
+        useLargeLayout = true,
+        scene = "语言页-绑定原生",
+    )
+}
+
+// 大原生 SHARED_LARGE_NATIVE：列表穿插 + 无缓存 400ms postDelayed 重试 bind

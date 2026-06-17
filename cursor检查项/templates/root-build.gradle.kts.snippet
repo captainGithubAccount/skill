@@ -1,0 +1,13 @@
+/** 根工程别名：便于直接 ./gradlew cursorCodeReviewCheck（仅检查，不打包） */
+tasks.register("cursorCodeReviewCheck") {
+    group = "cursor"
+    description = "Manual Cursor task- rule check (delegates to :app, no packaging)"
+    dependsOn(":app:cursorCodeReviewCheck")
+}
+
+/** verification 分组别名（根工程） */
+tasks.register("verifyCursorRules") {
+    group = "verification"
+    description = "Same as cursorCodeReviewCheck (delegates to :app)"
+    dependsOn(":app:verifyCursorRules")
+}

@@ -1,0 +1,26 @@
+// StartActivity.kt — videodownload 式启动页 UMP 段
+// 依赖：portable/AdConsentManager + UmpGate / MonetizationKitUmpCallbacks
+
+import com.isi.ump.AdConsentManager
+
+private suspend fun awaitConsent() {
+    if (AdConsentManager.hasCachedUmpConclusion(this)) {
+        markUmpGateResolved()
+        return
+    }
+    suspendCancellableCoroutine { cont ->
+        AdConsentManager(this, umpCallbacks).requestGatherConsentAndInitAds(lifecycleScope) {
+            markUmpGateResolved()
+            hideUmpWaitUi()
+            if (cont.isActive) cont.resume(Unit)
+        }
+    }
+}
+
+private fun applyUmpWaitUi() {
+    val show = !isHotStart && AdConsentManager.willRunUmpGather(applicationContext)
+    binding.isiSplashUmpWait.visibility = if (show) View.VISIBLE else View.GONE
+    binding.progressBar.visibility = if (show) View.GONE else View.VISIBLE
+}
+
+// 推荐时序：awaitConsent → awaitSdkInitIfNeeded → beginAdPhase → preload → loadSplash

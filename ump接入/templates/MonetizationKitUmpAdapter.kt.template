@@ -1,0 +1,30 @@
+// 有 AdBridge 项目：将 portable/UmpFlowCallbacks 接到 MonetizationKit + 埋点
+// 拷贝后替换包名，并在启动页构造 AdConsentManager 时传入本对象
+
+import com.isi.monetization.MonetizationKit
+import com.isi.telemetry.KiteAnalytics
+import com.isi.telemetry.TelemetryCatalog
+import com.isi.ump.UmpFlowCallbacks
+
+object MonetizationKitUmpCallbacks : UmpFlowCallbacks {
+
+    override fun onUmpFlowFinished(detail: String) {
+        MonetizationKit.markUmpResolved()
+    }
+
+    override fun onUmpPopShow() {
+        KiteAnalytics.emit(TelemetryCatalog.ump_pop_show)
+    }
+}
+
+// Application.onCreate
+// AdConsentManager.isDebugBuild = BuildConfig.DEBUG
+// if (BuildConfig.DEBUG) {
+//     AdConsentManager.debugConfig = AdConsentManager.DebugConfig(
+//         testDeviceHashedIds = AdConsentManager.DEFAULT_DEBUG_TEST_DEVICE_HASHED_IDS,
+//     )
+// }
+
+// 启动页 awaitConsent
+// AdConsentManager(activity, MonetizationKitUmpCallbacks)
+//     .requestGatherConsentAndInitAds(lifecycleScope) { /* UI 恢复进度条 */ }

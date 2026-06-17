@@ -1,0 +1,23 @@
+// MonetizationKit.kt — UMP 双闸门片段（有 AdBridge 项目）
+// UMP 核心逻辑在 portable/AdConsentManager.kt；此处仅保留广告请求闸门
+
+object MonetizationKit {
+    var isInit = false
+
+    @Volatile var isUmpResolved = false
+        private set
+
+    fun resetUmpResolvedForLaunchCycle() { isUmpResolved = false }
+    fun markUmpResolved() { isUmpResolved = true }
+
+    val enable: Boolean get() = isInit && !isSubs
+
+    fun enableFor(sense: AdSense): Boolean {
+        if (!enable) return false
+        if (!isUmpResolved) return false
+        // ... 远程配置
+        return true
+    }
+}
+
+// 启动页构造 AdConsentManager 时使用 templates/MonetizationKitUmpAdapter.kt.template

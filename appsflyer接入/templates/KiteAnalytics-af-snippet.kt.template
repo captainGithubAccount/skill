@@ -1,0 +1,12 @@
+// 合并进 KiteAnalytics.emit（Firebase 上报之前或之后均可，建议在 logEvent 之前）
+
+import com.isi.telemetry.AppsFlyerTracker
+import com.isi.telemetry.TelemetryCatalog
+
+fun emit(events: String, bundle: Bundle? = null) {
+    when (events) {
+        TelemetryCatalog.ad_impression -> AppsFlyerTracker.logAdImpression(bundle)
+        TelemetryCatalog.ad_click -> AppsFlyerTracker.logAdClick(bundle)
+    }
+    firebaseAnalytics?.logEvent(events, bundle)
+}

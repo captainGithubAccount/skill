@@ -1,0 +1,24 @@
+// Application.onCreate（PDF 金样：MyApplication / BaseApplication）
+// Debug UMP 测试设备（与 AdMob RequestConfiguration 同源列表，职责不同）
+if (BuildConfig.DEBUG) {
+    AdConsentManager.debugConfig = AdConsentManager.DebugConfig(
+        testDeviceHashedIds = AdConsentManager.DEFAULT_DEBUG_TEST_DEVICE_HASHED_IDS,
+    )
+}
+
+AdBridgeIntegration.onExternalFullScreenAdClick = {
+    // 可选：热启动观测
+}
+
+applicationScope.launch(Dispatchers.IO) {
+    // 1. 广告引擎预热（含 Debug setTestDeviceIds，不置 isInit）
+    MonetizationKit.prepareBeforeConsent(applicationContext)
+    // 2. A 面 assets 兜底（B 面 commit 前全员可用）
+    AdRemoteConfigBridge.applyDefaultLocalAssetsA(applicationContext)
+    // 3. SDK 初始化 → isInit=true
+    MonetizationKit.init(applicationContext) {
+        AdRequestLog.i("【SDK初始化】Application init 回调完成")
+    }
+    // 4. AB 面结算（commit 后 applyByMode + Firebase pdf_ad_config_a/b）
+    PdfAppAdsBootstrap.run(applicationContext)
+}

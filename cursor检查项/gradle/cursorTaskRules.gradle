@@ -1,0 +1,853 @@
+import groovy.json.JsonSlurper
+
+/**
+ * 解析 .mdc 文件顶部 YAML frontmatter（两个 --- 之间的内容）。
+ */
+ext.parseMdcFrontmatter = { File mdcFile ->
+    def text = mdcFile.getText('UTF-8')
+    if (!text.startsWith('---')) {
+        return null
+    }
+    def endIndex = text.indexOf('---', 3)
+    if (endIndex < 0) {
+        return null
+    }
+    return text.substring(3, endIndex).trim()
+}
+
+/** 构建日志导出目录（相对工程根目录：.cursor/buildTxt） */
+ext.BUILD_TXT_DIR_RELATIVE = '.cursor/buildTxt'
+
+/** 权限审计报告固定文件名（不含扩展名，每次构建覆盖同一文件） */
+ext.PERMISSION_AUDIT_BUILD_TXT_NAME = 'task-permission-audit'
+
+/**
+ * 获取 buildTxt 目录（工程根目录/.cursor/buildTxt）。
+ */
+ext.getBuildTxtDir = {
+    def dir = new File(rootProject.projectDir, BUILD_TXT_DIR_RELATIVE)
+    dir.mkdirs()
+    return dir
+}
+
+/**
+ * 是否将 buildTxt 内容同时 echo 到控制台（默认 false，仅写文件）。
+ * 调试时可加：./gradlew cursorCodeReviewCheck -PbuildTxt.echoToConsole=true
+ */
+ext.isBuildTxtEchoToConsole = {
+    def prop = rootProject.findProperty('buildTxt.echoToConsole')
+    return 'true'.equalsIgnoreCase(String.valueOf(prop))
+}
+
+/**
+ * 将闭包内 println 输出写入 buildTxt/{fileBaseName}.txt（默认不打印控制台）。
+ *
+ * @param fileBaseName 不含扩展名的文件名，如 task-permission-audit
+ * @param phase 写入来源（任务名），写入文件头
+ * @param block 要执行的打印逻辑
+ */
+ext.captureBuildTxtOutput = { String fileBaseName, String phase, Closure block ->
+    def buildTxtDir = getBuildTxtDir()
+    def outFile = new File(buildTxtDir, "${fileBaseName}.txt")
+    def buffer = new ByteArrayOutputStream()
+    def originalOut = System.out
+    def echo = isBuildTxtEchoToConsole()
+
+    def captureOut
+    if (echo) {
+        captureOut = new PrintStream(new OutputStream() {
+            void write(int b) {
+                originalOut.write(b)
+                buffer.write(b)
+            }
+
+            void write(byte[] bytes, int off, int len) {
+                originalOut.write(bytes, off, len)
+                buffer.write(bytes, off, len)
+            }
+        }, true, 'UTF-8')
+    } else {
+        captureOut = new PrintStream(buffer, true, 'UTF-8')
+    }
+
+    try {
+        System.setOut(captureOut)
+        block.call()
+    } finally {
+        System.setOut(originalOut)
+        captureOut.flush()
+    }
+
+    def timestamp = new java.text.SimpleDateFormat('yyyy-MM-dd HH:mm:ss').format(new Date())
+    def header = new StringBuilder()
+    header.append('# 自动生成，请勿手工编辑').append('\n')
+    header.append("# phase: ${phase}").append('\n')
+    header.append("# time: ${timestamp}").append('\n')
+    header.append('# path: ').append(outFile.name).append('\n\n')
+    outFile.setText(header.toString() + buffer.toString('UTF-8'), 'UTF-8')
+
+    if (echo) {
+        def relative = outFile.absolutePath
+            .replace(rootProject.projectDir.absolutePath + File.separator, '')
+        println "📝 已写入 ${relative}"
+    }
+}
+
+/**
+ * 从 frontmatter 文本中提取 gradleChecks JSON 数组字符串。
+ */
+ext.extractGradleChecksJson = { String frontmatter ->
+    if (frontmatter == null || frontmatter.isEmpty()) {
+        return null
+    }
+    def matcher = (frontmatter =~ /(?m)^gradleChecks:\s*(.+)$/)
+    if (!matcher.find()) {
+        return null
+    }
+    def raw = matcher.group(1).trim()
+    if ((raw.startsWith("'") && raw.endsWith("'")) || (raw.startsWith('"') && raw.endsWith('"'))) {
+        raw = raw.substring(1, raw.length() - 1)
+    }
+    return raw.trim()
+}
+
+/**
+ * 静默执行闭包（默认不输出控制台；调试时 -PbuildTxt.echoToConsole=true）。
+ */
+ext.runSilentlyUnlessEcho = { Closure block ->
+    if (isBuildTxtEchoToConsole()) {
+        block.call()
+        return
+    }
+    def buffer = new ByteArrayOutputStream()
+    def silentOut = new PrintStream(buffer, true, 'UTF-8')
+    def originalOut = System.out
+    try {
+        System.setOut(silentOut)
+        block.call()
+    } finally {
+        System.setOut(originalOut)
+        silentOut.flush()
+    }
+}
+
+/**
+ * 清理 buildTxt 下除权限审计外的其它 txt，避免历史残留多文件。
+ */
+ext.cleanupBuildTxtExceptPermissionAudit = {
+    def dir = getBuildTxtDir()
+    def keepName = "${PERMISSION_AUDIT_BUILD_TXT_NAME}.txt"
+    dir.listFiles()?.each { File file ->
+        if (file.isFile() && file.name.endsWith('.txt') && file.name != keepName) {
+            file.delete()
+        }
+    }
+}
+
+/**
+ * 判断 .mdc 文件名是否属于 cursorCodeReviewCheck 扫描范围（文件名包含 task-）。
+ */
+ext.isCursorTaskRuleFile = { String fileName ->
+    return fileName.toLowerCase().contains('task-') && fileName.toLowerCase().endsWith('.mdc')
+}
+
+/**
+ * 收集待执行的 Cursor task 规则文件。
+ *
+ * @param onlyTaskPrefix true 仅 task- 规则；false 全部 .mdc
+ */
+ext.collectCursorRuleFiles = { boolean onlyTaskPrefix ->
+    def rulesDir = new File(rootProject.projectDir, '.cursor/rules')
+    if (!rulesDir.exists() || !rulesDir.isDirectory()) {
+        println '⚠️ [.cursor/rules] 目录不存在，跳过 Cursor 规则检查'
+        return []
+    }
+    return rulesDir.listFiles({ File dir, String name ->
+        name.toLowerCase().endsWith('.mdc') && (!onlyTaskPrefix || isCursorTaskRuleFile(name))
+    } as FilenameFilter)?.toList()?.sort() ?: []
+}
+
+/**
+ * 读取 properties 文件为 key-value（忽略 # 注释行，trim 后）。
+ */
+ext.loadPropertiesLines = { File propsFile ->
+    if (!propsFile.exists()) {
+        return [:]
+    }
+    def result = [:]
+    propsFile.eachLine('UTF-8') { line ->
+        def trimmed = line.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith('#')) {
+            return
+        }
+        def eqIndex = trimmed.indexOf('=')
+        if (eqIndex <= 0) {
+            return
+        }
+        def key = trimmed.substring(0, eqIndex).trim()
+        def value = trimmed.substring(eqIndex + 1).trim()
+        result[key] = value
+    }
+    return result
+}
+
+/**
+ * 执行 propertiesScan：扫描 properties 文件中是否命中指定 value。
+ */
+ext.runPropertiesScanCheck = { Map check, String ruleFileName ->
+    def targetFile = check.file ?: 'local.properties'
+    def propsFile = new File(rootProject.projectDir, targetFile)
+    if (!propsFile.exists()) {
+        println "⚠️ [${ruleFileName}] 未找到配置文件：${targetFile}"
+        return 1
+    }
+
+    def props = loadPropertiesLines(propsFile)
+    def matchValues = (check.matchValues ?: [])*.toString()
+    def matchKeys = (check.matchKeys ?: [])*.toString()
+    def hits = []
+
+    props.each { key, value ->
+        def keyMatched = matchKeys.isEmpty() || matchKeys.contains(key)
+        def valueMatched = matchValues.contains(value)
+        if (keyMatched && valueMatched) {
+            hits << "${key}=${value}"
+        }
+    }
+
+    if (hits.isEmpty()) {
+        if (check.success) {
+            println check.success
+        }
+        return 0
+    }
+
+    def warn = (check.warn ?: '⚠️ propertiesScan 命中禁止值').toString()
+    println warn.replace('{hits}', hits.join(', '))
+    hits.each { hit -> println "  - ${hit}" }
+    return hits.size()
+}
+
+/**
+ * 执行 sourceScan：在源码目录中搜索禁止 pattern。
+ */
+ext.runSourceScanCheck = { Map check, String ruleFileName ->
+    def scanRoot = check.root ?: 'app'
+    def includes = check.includes ?: ['**/*.kt', '**/*.java']
+    def pattern = check.pattern?.toString()
+    if (pattern == null || pattern.isEmpty()) {
+        println "⚠️ [${ruleFileName}] sourceScan 缺少 pattern，已跳过"
+        return 0
+    }
+
+    def rootFile = new File(rootProject.projectDir, scanRoot)
+    if (!rootFile.exists()) {
+        println "⚠️ [${ruleFileName}] 扫描目录不存在：${scanRoot}"
+        return 0
+    }
+
+    def regex = ~pattern
+    def matchedFiles = []
+    fileTree(rootFile) {
+        includes.each { include it }
+        if (check.excludes) {
+            check.excludes.each { exclude it }
+        }
+    }.each { File sourceFile ->
+        if (sourceFile.text =~ regex) {
+            matchedFiles << sourceFile.absolutePath
+                .replace(rootProject.projectDir.absolutePath + File.separator, '')
+        }
+    }
+
+    if (matchedFiles.isEmpty()) {
+        if (check.success) {
+            println check.success
+        }
+        return 0
+    }
+
+    def warn = (check.warn ?: '⚠️ sourceScan 发现违规代码').toString()
+    println warn.replace('{files}', matchedFiles.join(', '))
+    matchedFiles.each { path -> println "  - ${path}" }
+    return matchedFiles.size()
+}
+
+/**
+ * 执行 fileExists：检查必要文件是否存在。
+ */
+ext.runFileExistsCheck = { Map check, String ruleFileName ->
+    def targetFile = check.file
+    if (targetFile == null || targetFile.toString().isEmpty()) {
+        println "⚠️ [${ruleFileName}] fileExists 缺少 file，已跳过"
+        return 0
+    }
+    def file = new File(rootProject.projectDir, targetFile.toString())
+    if (file.exists()) {
+        if (check.success) {
+            println check.success
+        }
+        return 0
+    }
+    def warn = (check.warn ?: "⚠️ 缺少必要文件：${targetFile}").toString()
+    println warn.replace('{file}', targetFile.toString())
+    return 1
+}
+
+/**
+ * 从 AndroidManifest 解析 LAUNCHER Activity 类名。
+ */
+ext.findLauncherActivityFromManifest = { File manifestFile ->
+    if (!manifestFile.exists()) {
+        return null
+    }
+    def text = manifestFile.getText('UTF-8')
+    def blocks = text.split('<activity')
+    for (block in blocks) {
+        if (block.contains('LAUNCHER') && block.contains('MAIN')) {
+            def matcher = (block =~ /android:name="([^"]+)"/)
+            if (matcher.find()) {
+                return matcher.group(1)
+            }
+        }
+    }
+    return null
+}
+
+/**
+ * 打印当前 App 启动流程（task-print_splash，仅信息输出，不计入警告）。
+ */
+ext.runPrintSplashFlowCheck = { Map check, String ruleFileName ->
+    def manifestFile = new File(rootProject.projectDir, 'app/src/main/AndroidManifest.xml')
+    def launcher = findLauncherActivityFromManifest(manifestFile)
+    def appClass = 'com.pro.browser.MyApplication'
+
+    println ''
+    println '========== [task-print_splash] 当前启动流程 =========='
+    println ''
+    println '1. 进程启动'
+    println "   └─ Application: ${appClass} (AndroidManifest application android:name)"
+    println '      ├─ MMKV / Firebase / KiteAnalytics 初始化'
+    println '      ├─ AppDatabase、DemoFileManager、CacheFileRegistry'
+    println '      ├─ Coil、StateConfig、NetConfig 网络层'
+    println '      └─ 协程并行: PdfAppBootstrap.run(context)  [IO, 最多 8s 超时]'
+    println '         ├─ AppRemoteConfig.fetchAndActivate()'
+    println '         ├─ Mode2Utils.initMode2AndGet(context) → 自然 A/B 判定'
+    println '         ├─ DebugAbOverride.resolveModeB (Debug 可强制 A/B)'
+    println '         ├─ AttributionManager.emitAbTelemetryAfterBootstrap'
+    println '         └─ configAppliedThisProcess = true'
+    println ''
+    println '2. LAUNCHER Activity'
+    if (launcher) {
+        println "   └─ ${launcher} (AndroidManifest MAIN + LAUNCHER)"
+    } else {
+        println '   └─ ⚠️ 未在 AndroidManifest 中解析到 LAUNCHER Activity'
+    }
+    println '      ├─ DebugAbOverride.onStartActivityCreate(intent)  [Debug AB 入口]'
+    println '      ├─ 埋点: TelemetryCatalog.loading_start'
+    println '      ├─ 轮询等待 PdfAppBootstrap.configAppliedThisProcess (最多 8s, 50ms 间隔)'
+    println '      ├─ 进度条动画 startLoadingAnim (2s, 0→100)'
+    println '      └─ startJumpPage():'
+    println '         ├─ 埋点: TelemetryReporter.loadingEnd'
+    println '         ├─ 首次进程: MMKV KEY_FIRST_OPEN_EMITTED → first_open 埋点'
+    println '         ├─ SPUtils isFirstLaunch == true  → GuideActivity'
+    println '         ├─ SPUtils isFirstLaunch == false → MainActivity'
+    println '         └─ finish() 关闭 Splash'
+    println ''
+    println '3. 首次启动分支 (GuideActivity)'
+    println '   └─ GuideActivity: SPUtils isFirstLaunch = false'
+    println '      ├─ ViewPager + GuideFragment1/2/3'
+    println '      └─ GuideFragment3 最后一页 → MainActivity → finish Guide'
+    println ''
+    println '4. 非首次启动'
+    println '   └─ 直接进入 MainActivity'
+    println ''
+    println '5. Debug 重启路径'
+    println '   └─ DebugAbOverride.restartApp → SplashActivity (CLEAR_TASK)'
+    println '      └─ EXTRA_DEBUG_AB_RESTART=true 时保留 AB Debug 入口状态'
+    println ''
+    println '关键源码:'
+    println '  - app/src/main/AndroidManifest.xml'
+    println '  - app/src/main/java/com/pro/browser/MyApplication.kt'
+    println '  - app/src/main/java/com/pro/browser/bootstrap/PdfAppBootstrap.kt'
+    println '  - app/src/main/java/com/pro/browser/page/splash/SplashActivity.kt'
+    println '  - app/src/main/java/com/pro/browser/page/guide/GuideActivity.kt'
+    println '  - app/src/main/java/com/pro/browser/page/guide/GuideFragment3.kt'
+    println '  - app/src/main/java/com/pro/browser/util/debug/DebugAbOverride.kt'
+    println ''
+    println '===================================================='
+    println ''
+    return 0
+}
+
+/** 敏感权限分类（用于上架审查打印） */
+ext.PERMISSION_AUDIT_SENSITIVE_GROUPS = [
+    '存储与媒体': [
+        'android.permission.READ_EXTERNAL_STORAGE',
+        'android.permission.WRITE_EXTERNAL_STORAGE',
+        'android.permission.MANAGE_EXTERNAL_STORAGE',
+        'android.permission.READ_MEDIA_IMAGES',
+        'android.permission.READ_MEDIA_VIDEO',
+        'android.permission.READ_MEDIA_AUDIO',
+        'android.permission.READ_MEDIA_VISUAL_USER_SELECTED',
+    ],
+    '位置': [
+        'android.permission.ACCESS_FINE_LOCATION',
+        'android.permission.ACCESS_COARSE_LOCATION',
+        'android.permission.ACCESS_BACKGROUND_LOCATION',
+    ],
+    '相机与麦克风': [
+        'android.permission.CAMERA',
+        'android.permission.RECORD_AUDIO',
+    ],
+    '电话与短信': [
+        'android.permission.READ_PHONE_STATE',
+        'android.permission.CALL_PHONE',
+        'android.permission.READ_SMS',
+        'android.permission.RECEIVE_SMS',
+    ],
+    '开机与后台': [
+        'android.permission.RECEIVE_BOOT_COMPLETED',
+        'android.permission.FOREGROUND_SERVICE',
+        'android.permission.FOREGROUND_SERVICE_LOCATION',
+        'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+        'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
+    ],
+    '广告与归因': [
+        'com.google.android.gms.permission.AD_ID',
+        'android.permission.ACCESS_ADSERVICES_ATTRIBUTION',
+        'android.permission.ACCESS_ADSERVICES_AD_ID',
+        'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
+    ],
+]
+
+/** XXPermissions Permission 常量 → 完整权限名 */
+ext.PERMISSION_AUDIT_XX_MAP = [
+    'READ_MEDIA_IMAGES'              : 'android.permission.READ_MEDIA_IMAGES',
+    'READ_MEDIA_VIDEO'               : 'android.permission.READ_MEDIA_VIDEO',
+    'READ_MEDIA_AUDIO'               : 'android.permission.READ_MEDIA_AUDIO',
+    'READ_EXTERNAL_STORAGE'          : 'android.permission.READ_EXTERNAL_STORAGE',
+    'WRITE_EXTERNAL_STORAGE'         : 'android.permission.WRITE_EXTERNAL_STORAGE',
+    'MANAGE_EXTERNAL_STORAGE'        : 'android.permission.MANAGE_EXTERNAL_STORAGE',
+    'CAMERA'                         : 'android.permission.CAMERA',
+    'RECORD_AUDIO'                   : 'android.permission.RECORD_AUDIO',
+    'ACCESS_FINE_LOCATION'           : 'android.permission.ACCESS_FINE_LOCATION',
+    'ACCESS_COARSE_LOCATION'         : 'android.permission.ACCESS_COARSE_LOCATION',
+    'POST_NOTIFICATIONS'             : 'android.permission.POST_NOTIFICATIONS',
+    'READ_PHONE_STATE'               : 'android.permission.READ_PHONE_STATE',
+]
+
+/**
+ * 从合并/主 Manifest 提取 uses-permission 名称列表。
+ */
+ext.parseManifestPermissionNames = { String manifestText ->
+    def names = [] as LinkedHashSet
+    def matcher = (manifestText =~ /<uses-permission[^>]*android:name="([^"]+)"/)
+    matcher.each { names.add(it[1]) }
+    return names.toList()
+}
+
+/**
+ * 解析主 Manifest 中 tools:node="remove" 的权限与组件。
+ */
+ext.parseManifestRemoveNodes = { File mainManifest ->
+    def removedPermissions = [] as LinkedHashSet
+    def removedComponents = [] as LinkedHashSet
+    if (!mainManifest.exists()) {
+        return [permissions: removedPermissions.toList(), components: removedComponents.toList()]
+    }
+    def text = mainManifest.getText('UTF-8')
+    def permMatcher = (text =~ /(?s)<uses-permission[^>]*android:name="([^"]+)"[^>]*tools:node="remove"/)
+    permMatcher.each { removedPermissions.add(it[1]) }
+    def svcMatcher = (text =~ /(?s)<service[^>]*android:name="([^"]+)"[^>]*tools:node="remove"/)
+    svcMatcher.each { removedComponents.add("service:${it[1]}") }
+    return [permissions: removedPermissions.toList(), components: removedComponents.toList()]
+}
+
+/**
+ * 从 manifest-merger 报告解析权限来源库。
+ */
+ext.parseMergerPermissionSources = { File reportFile ->
+    def sources = [:].withDefault { [] as LinkedHashSet }
+    if (!reportFile.exists()) {
+        return sources
+    }
+    def currentPerm = null
+    reportFile.eachLine('UTF-8') { line ->
+        def permMatch = (line =~ /^uses-permission#(.+)$/)
+        if (permMatch.find()) {
+            currentPerm = permMatch.group(1)
+            return
+        }
+        if (currentPerm != null && line.contains('ADDED from [')) {
+            def libMatch = (line =~ /ADDED from \[([^\]]+)\]/)
+            if (libMatch.find()) {
+                sources[currentPerm].add(libMatch.group(1))
+            }
+        }
+    }
+    return sources.collectEntries { k, v -> [(k): v.toList()] }
+}
+
+/**
+ * 扫描源码中显式引用到的权限名。
+ */
+ext.scanSourceReferencedPermissions = { List<String> scanRoots ->
+    def referenced = [] as LinkedHashSet
+    scanRoots.each { relRoot ->
+        def root = new File(rootProject.projectDir, relRoot)
+        if (!root.exists()) {
+            return
+        }
+        fileTree(root) {
+            include '**/*.kt', '**/*.java', '**/*.xml'
+            exclude '**/build/**'
+        }.each { File f ->
+            def text = f.getText('UTF-8')
+            def direct = (text =~ /android\.permission\.([A-Z0-9_]+)/)
+            direct.each { referenced.add("android.permission.${it[1]}") }
+            def manifestPerm = (text =~ /android:name="(android\.permission\.[^"]+)"/)
+            manifestPerm.each { referenced.add(it[1]) }
+            PERMISSION_AUDIT_XX_MAP.each { shortName, fullName ->
+                if (text.contains("Permission.${shortName}") || text.contains("Manifest.permission.${shortName}")) {
+                    referenced.add(fullName)
+                }
+            }
+            if (text.contains('openGallery') || text.contains('PictureSelector') || text.contains('SelectMimeType.ofImage')) {
+                referenced.add('android.permission.READ_MEDIA_IMAGES')
+                referenced.add('android.permission.READ_EXTERNAL_STORAGE')
+            }
+            if (text.contains('openCamera') || text.contains('SelectMimeType.ofVideo') || text.contains('SelectMimeType.ofAll')) {
+                referenced.add('android.permission.CAMERA')
+                referenced.add('android.permission.READ_MEDIA_VIDEO')
+            }
+            if (text.contains('WorkManager') || text.contains('PeriodicWork') || text.contains('OneTimeWorkRequest')) {
+                referenced.add('android.permission.RECEIVE_BOOT_COMPLETED')
+                referenced.add('android.permission.FOREGROUND_SERVICE')
+            }
+        }
+    }
+    return referenced.toList()
+}
+
+/**
+ * 根据 build.gradle 依赖与源码特征推断 SDK 所需权限。
+ */
+ext.inferSdkPermissions = { String gradleText, List<String> sourceReferenced ->
+    def inferred = [] as LinkedHashSet
+    inferred.add('android.permission.INTERNET')
+    inferred.add('android.permission.ACCESS_NETWORK_STATE')
+
+    if (gradleText.contains('firebase') || gradleText.contains('play-services-measurement')) {
+        inferred.add('android.permission.WAKE_LOCK')
+        inferred.add('com.google.android.gms.permission.AD_ID')
+        inferred.add('android.permission.ACCESS_ADSERVICES_ATTRIBUTION')
+        inferred.add('android.permission.ACCESS_ADSERVICES_AD_ID')
+        inferred.add('com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE')
+    }
+    if (gradleText.contains('install.referrer') || gradleText.contains('installreferrer')) {
+        inferred.add('com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE')
+    }
+    if (gradleText.contains('pictureselector') || gradleText.contains('PictureSelector')) {
+        if (sourceReferenced.contains('android.permission.READ_MEDIA_IMAGES') ||
+            sourceReferenced.contains('android.permission.READ_EXTERNAL_STORAGE')) {
+            inferred.add('android.permission.READ_MEDIA_IMAGES')
+        }
+    }
+    if (gradleText.contains('androidx.work') || gradleText.contains('work-runtime')) {
+        inferred.add('android.permission.RECEIVE_BOOT_COMPLETED')
+        inferred.add('android.permission.FOREGROUND_SERVICE')
+    }
+    return inferred.toList()
+}
+
+/**
+ * 判断是否为应用签名/内部权限（不可 tools:node remove）。
+ */
+ext.isInternalOrSignaturePermission = { String permName, String applicationId ->
+    if (permName.contains('DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION')) {
+        return true
+    }
+    if (permName.startsWith("${applicationId}.")) {
+        return true
+    }
+    return false
+}
+
+/**
+ * 生成 Manifest remove 配置片段。
+ */
+ext.buildPermissionRemoveSnippet = { List<String> permissionNames ->
+    if (permissionNames.isEmpty()) {
+        return '    （无需新增 remove 配置）'
+    }
+    def sb = new StringBuilder()
+    permissionNames.each { perm ->
+        sb.append('    <uses-permission\n')
+        sb.append("        android:name=\"${perm}\"\n")
+        sb.append('        tools:node="remove" />\n')
+    }
+    return sb.toString().trim()
+}
+
+/**
+ * 执行敏感权限审计（task-permission-audit，仅信息输出，不计入警告）。
+ */
+ext.runPermissionAuditCheck = { Map check, String ruleFileName ->
+    def mergedManifest = new File(
+        rootProject.projectDir,
+        'app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml'
+    )
+    def mainManifest = new File(rootProject.projectDir, 'app/src/main/AndroidManifest.xml')
+    def mergerReport = new File(rootProject.projectDir, 'app/build/outputs/logs/manifest-merger-debug-report.txt')
+    def appGradle = new File(rootProject.projectDir, 'app/build.gradle.kts')
+
+    println ''
+    println '========== [task-permission-audit] 敏感权限审计 =========='
+    println ''
+
+    if (!mergedManifest.exists()) {
+        println '⚠️ 未找到合并 Manifest，请先执行：'
+        println '   ./gradlew :app:processDebugMainManifest'
+        println '   或 ./gradlew cursorCodeReviewCheck（已自动依赖 manifest 合并）'
+        println ''
+        return 0
+    }
+
+    def mergedPerms = parseManifestPermissionNames(mergedManifest.getText('UTF-8'))
+    def removes = parseManifestRemoveNodes(mainManifest)
+    def mergerSources = parseMergerPermissionSources(mergerReport)
+    def scanRoots = (check.scanRoots ?: ['app/src/main', 'netLib/src/main']) as List
+    def sourceReferenced = scanSourceReferencedPermissions(scanRoots)
+    def gradleText = appGradle.exists() ? appGradle.getText('UTF-8') : ''
+    def sdkInferred = inferSdkPermissions(gradleText, sourceReferenced)
+
+    def applicationId = 'com.project.pdf'
+    def appIdMatcher = (mainManifest.exists() ? mainManifest.getText('UTF-8') : '') =~ /applicationId\s*=?\s*"([^"]+)"/
+    // 从 build.gradle.kts 读取 applicationId
+    def buildAppId = (gradleText =~ /applicationId\s*=\s*"([^"]+)"/)
+    if (buildAppId.find()) {
+        applicationId = buildAppId.group(1)
+    }
+
+    // ── 1. 敏感权限 ──
+    println '【一】当前合并清单中的敏感权限'
+    def sensitiveFound = []
+    PERMISSION_AUDIT_SENSITIVE_GROUPS.each { groupName, permList ->
+        def hits = mergedPerms.findAll { permList.contains(it) }
+        if (!hits.isEmpty()) {
+            sensitiveFound.addAll(hits)
+            println "  [${groupName}]"
+            hits.each { perm ->
+                def libs = mergerSources[perm]?.join(', ') ?: '（未知来源，可能为主工程声明）'
+                println "    - ${perm}"
+                println "      来源: ${libs}"
+            }
+        }
+    }
+    if (sensitiveFound.isEmpty()) {
+        println '  （无预定义敏感权限命中）'
+    }
+    println ''
+
+    // ── 2. 全部合并权限 ──
+    println '【二】合并 Manifest 全部 uses-permission（含三方库）'
+    mergedPerms.each { perm ->
+        def libs = mergerSources[perm]?.join(', ') ?: '主工程 / 未知'
+        println "  - ${perm}"
+        println "    来源: ${libs}"
+    }
+    println ''
+
+    // ── 3. 已配置 remove ──
+    println '【三】主 Manifest 已配置 tools:node="remove"'
+    if (removes.permissions.isEmpty() && removes.components.isEmpty()) {
+        println '  （无）'
+    } else {
+        removes.permissions.each { println "  - 权限: ${it}" }
+        removes.components.each { println "  - 组件: ${it}" }
+    }
+    println ''
+
+    // ── 4. 建议保留 ──
+    println '【四】建议保留（源码 / SDK / 系统内部）'
+    def keepReasons = [:].withDefault { [] as LinkedHashSet }
+    mergedPerms.each { perm ->
+        if (isInternalOrSignaturePermission(perm, applicationId)) {
+            keepReasons[perm].add('应用签名/内部权限，不可 remove')
+        }
+        if (sourceReferenced.contains(perm)) {
+            keepReasons[perm].add('源码显式引用')
+        }
+        if (sdkInferred.contains(perm)) {
+            keepReasons[perm].add('依赖 SDK 推断需要')
+        }
+        if (perm == 'android.permission.INTERNET') {
+            keepReasons[perm].add('网络功能必需')
+        }
+    }
+    if (keepReasons.isEmpty()) {
+        println '  （无）'
+    } else {
+        keepReasons.keySet().sort().each { perm ->
+            println "  - ${perm}"
+            keepReasons[perm].each { reason -> println "      原因: ${reason}" }
+        }
+    }
+    println ''
+
+    // ── 5. 可安全 remove ──
+    println '【五】可安全 remove（合并清单仍存在，且不影响当前 App 功能）'
+    def removable = mergedPerms.findAll { perm ->
+        if (isInternalOrSignaturePermission(perm, applicationId)) {
+            return false
+        }
+        if (removes.permissions.contains(perm)) {
+            return false
+        }
+        if (sourceReferenced.contains(perm)) {
+            return false
+        }
+        if (sdkInferred.contains(perm)) {
+            return false
+        }
+        if (perm == 'android.permission.INTERNET' || perm == 'android.permission.ACCESS_NETWORK_STATE') {
+            return false
+        }
+        return true
+    }.sort()
+
+    if (removable.isEmpty()) {
+        println '  ✅ 未发现可额外 remove 的权限（或均已配置 remove）'
+    } else {
+        removable.each { perm ->
+            def libs = mergerSources[perm]?.join(', ') ?: '未知'
+            println "  - ${perm}"
+            println "      来源: ${libs}"
+            println '      判定: 源码未引用且当前 SDK 推断不需要'
+        }
+    }
+    println ''
+
+    // ── 6. 复制到 Manifest 的配置 ──
+    println '【六】复制到 app/src/main/AndroidManifest.xml（<manifest> 内，application 之前）'
+    println ''
+    println buildPermissionRemoveSnippet(removable)
+    println ''
+
+    // ── 7. 仍出现在合并清单但已配置 remove 的异常 ──
+    def removeLeak = removes.permissions.findAll { mergedPerms.contains(it) }
+    if (!removeLeak.isEmpty()) {
+        println '【七】⚠️ 已配置 remove 但合并清单仍存在（请 Clean 后重新合并 Manifest）'
+        removeLeak.each { println "  - ${it}" }
+        println ''
+    }
+
+    println '说明:'
+    println '  - 审计基于 debug 合并 Manifest + 源码静态扫描，运行时动态申请需人工复核'
+    println '  - 「可安全 remove」不含签名/内部权限；移除后请回归：选图、网络、埋点、AB 归因'
+    println '  - 报告路径: app/build/outputs/logs/manifest-merger-debug-report.txt'
+    println ''
+    println '===================================================='
+    println ''
+    return 0
+}
+
+/**
+ * 执行单条 gradleCheck 配置。
+ */
+ext.runSingleGradleCheck = { Map check, String ruleFileName ->
+    def type = check.type?.toString()
+    switch (type) {
+        case 'propertiesScan':
+            return runPropertiesScanCheck(check, ruleFileName)
+        case 'sourceScan':
+            return runSourceScanCheck(check, ruleFileName)
+        case 'fileExists':
+            return runFileExistsCheck(check, ruleFileName)
+        case 'printSplashFlow':
+            return runPrintSplashFlowCheck(check, ruleFileName)
+        case 'permissionAudit':
+            return runPermissionAuditCheck(check, ruleFileName)
+        default:
+            println "⚠️ [${ruleFileName}] 未知检查类型：${type}，已跳过"
+            return 0
+    }
+}
+
+/**
+ * 执行指定 .mdc 规则文件中的 gradleChecks。
+ */
+ext.executeCursorRuleFile = { File mdcFile ->
+    def frontmatter = parseMdcFrontmatter(mdcFile)
+    if (frontmatter == null) {
+        println "⚠️ [${mdcFile.name}] 无 frontmatter，已跳过"
+        return 0
+    }
+
+    def checksJson = extractGradleChecksJson(frontmatter)
+    if (checksJson == null || checksJson.isEmpty()) {
+        println "⚠️ [${mdcFile.name}] 未配置 gradleChecks，已跳过"
+        return 0
+    }
+
+    def checks
+    try {
+        checks = new JsonSlurper().parseText(checksJson)
+    } catch (Exception ignored) {
+        println "⚠️ [${mdcFile.name}] gradleChecks JSON 解析失败，已跳过"
+        return 0
+    }
+
+    if (!(checks instanceof List)) {
+        println "⚠️ [${mdcFile.name}] gradleChecks 必须是数组，已跳过"
+        return 0
+    }
+
+    def warningCount = 0
+    checks.each { item ->
+        if (item instanceof Map) {
+            warningCount += runSingleGradleCheck((Map) item, mdcFile.name)
+        }
+    }
+    return warningCount
+}
+
+/**
+ * 批量执行 Cursor 规则检查。
+ *
+ * @param onlyTaskPrefix true=仅 task- 规则（cursorCodeReviewCheck）；false=全部 .mdc
+ */
+ext.runCursorRuleChecks = { boolean onlyTaskPrefix, String phase ->
+    def ruleFiles = collectCursorRuleFiles(onlyTaskPrefix)
+    println ''
+    println "========== Cursor 规则检查 [${phase}] =========="
+    if (ruleFiles.isEmpty()) {
+        println '未发现可执行的 .mdc 规则文件'
+        println "========== Cursor 规则检查结束 [${phase}] =========="
+        println ''
+        return
+    }
+
+    def totalWarnings = 0
+    ruleFiles.each { File mdcFile ->
+        println "--- 执行规则：${mdcFile.name} ---"
+        if (mdcFile.name == 'task-permission-audit.mdc') {
+            cleanupBuildTxtExceptPermissionAudit()
+            captureBuildTxtOutput(PERMISSION_AUDIT_BUILD_TXT_NAME, phase) {
+                totalWarnings += executeCursorRuleFile(mdcFile)
+            }
+            println "📝 权限审计报告已写入 ${BUILD_TXT_DIR_RELATIVE}/${PERMISSION_AUDIT_BUILD_TXT_NAME}.txt"
+        } else {
+            totalWarnings += executeCursorRuleFile(mdcFile)
+        }
+    }
+
+    if (totalWarnings > 0) {
+        println "⚠️ Cursor 规则检查完成：共 ${totalWarnings} 项警告（不阻断构建）"
+    } else {
+        println '✅ Cursor 规则检查完成：未发现警告'
+    }
+    println "========== Cursor 规则检查结束 [${phase}] =========="
+    println ''
+}

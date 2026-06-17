@@ -1,0 +1,35 @@
+package {track_package}
+
+import android.content.Context
+import android.os.Bundle
+import {promo_package}.internal.AdjustSdkUtil
+
+/**
+ * 应用埋点桥接：Adjust 归因/事件 + Firebase Analytics 双路上报。
+ *
+ * - Application 启动时调用 [init]；
+ * - 广告收益由 [AdjustSdkUtil.trackAdMobPaidEvent] 在 OnPaidEventListener 中上报；
+ * - 广告展示等自定义事件通过 [emit] 双路上报。
+ */
+object DeferredTrackBridge {
+
+    /** 与 [AdjustSdkUtil.isReady] 一致 */
+    val isAdjustReady: Boolean
+        get() = AdjustSdkUtil.isReady
+
+    /** 初始化 Adjust（读取 local.properties → adjust.app.token） */
+    fun init(context: Context, debug: Boolean) {
+        AdjustSdkUtil.init(context, debug)
+    }
+
+    /**
+     * 上报自定义事件：Adjust 事件 token + Firebase 同名事件。
+     */
+    fun emit(event: String) {
+        AdjustSdkUtil.trackEvent(event)
+        VdAnalyticsHub.emit(event, Bundle())
+    }
+
+    /** 广告展示（Adjust + Firebase 双路，事件名 ad_show） */
+    const val AD_SHOW = "ad_show"
+}

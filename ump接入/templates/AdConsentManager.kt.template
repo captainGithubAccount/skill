@@ -1,0 +1,9 @@
+// 完整源码见 ../portable/AdConsentManager.kt（面向任意项目，不依赖 AdBridge）
+// 拷贝 portable/ 下 5 个 .kt 到目标项目后替换包名 com.isi.ump
+
+// 构造示例（无 AdBridge）：
+// val callbacks = GateUmpFlowCallbacks(SimpleUmpGate)
+// AdConsentManager(activity, callbacks).requestGatherConsentAndInitAds(lifecycleScope) { ... }
+
+// 构造示例（有 AdBridge）：
+// AdConsentManager(activity, MonetizationKitUmpCallbacks).requestGatherConsentAndInitAds(...)

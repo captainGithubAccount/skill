@@ -1,0 +1,19 @@
+// 合并进 DeferredAttributionBridge（与 Adjust init 并列）
+
+import com.isi.telemetry.AppsFlyerTracker
+
+fun init(context: Context, debug: Boolean) {
+    AdjustSdkUtil.init(context, debug)
+    AppsFlyerTracker.init(context, debug)
+}
+
+fun onAppForeground(context: Context) {
+    AppsFlyerTracker.startSession(context)
+}
+
+fun updateUninstallToken(context: Context, fcmToken: String) {
+    AppsFlyerTracker.updateUninstallToken(context, fcmToken)
+}
+
+val isAppsFlyerReady: Boolean
+    get() = AppsFlyerTracker.isReady

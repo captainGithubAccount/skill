@@ -1,0 +1,29 @@
+package {app_package}.push
+
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+import com.isi.telemetry.AppsFlyerTracker
+
+/**
+ * FCM Token 刷新时上报 AppsFlyer 卸载衡量。
+ */
+class AppsFlyerFcmService : FirebaseMessagingService() {
+
+    companion object {
+        private const val TAG = "AppsFlyerFcm"
+    }
+
+    /**
+     * 新 Token 下发时同步给 AF（卸载衡量必需）。
+     */
+    override fun onNewToken(token: String) {
+        super.onNewToken(token)
+        AppsFlyerTracker.updateUninstallToken(applicationContext, token)
+        // 使用项目统一 Log 工具，简体中文
+        // AppLogUtils.iTag(TAG, "FCM onNewToken 已上报 AF 卸载衡量")
+    }
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        super.onMessageReceived(message)
+    }
+}

@@ -1,0 +1,28 @@
+// Banner 广告 — PDF 金样：MainBannerController（可折叠 Banner）
+// 无 Loader 预加载；MainActivity.onResume 现场 load
+// 仅 B 面 + JSON ad_sense=4 + 远程 pdf_ad_config_b 生效
+
+override fun onResume() {
+    super.onResume()
+    if (currentTabIsHome) {
+        MainBannerController.showCollapsibleBanner(
+            activity = this,
+            bannerHost = binding.bannerHost,
+            adContainer = binding.adContainer,
+            forceReload = false,
+        )
+    }
+}
+
+// B 面升级或 RC 刷新后重载
+PdfAppAdsBootstrap.addOnModeBUpgradedListener {
+    MainBannerController.showCollapsibleBanner(
+        activity = this,
+        bannerHost = binding.bannerHost,
+        adContainer = binding.adContainer,
+        forceReload = true,
+    )
+}
+
+// Tab 切离 Home：hide(GONE)，不 destroy，切回复用已加载实例
+MainBannerController.hide(binding.bannerHost, binding.adContainer)

@@ -1,0 +1,10 @@
+// 广告模块 AdEventUtils（或 PromoEventRelay 等价类）
+
+/** 由 app 模块注入，用于 Meta App Events 收入上报 */
+var facebookRevenueReporter: ((revenue: Double, currency: String) -> Unit)? = null
+
+fun loadAdLoadedReport(adValue: AdValue, responseInfo: ResponseInfo?) {
+    // ... Adjust / Firebase 等既有逻辑
+    val revenue = adValue.valueMicros / 1_000_000.0
+    facebookRevenueReporter?.invoke(revenue, adValue.currencyCode)
+}

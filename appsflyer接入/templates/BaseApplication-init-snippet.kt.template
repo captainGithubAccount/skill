@@ -1,0 +1,7 @@
+// Application.onCreate 内，Firebase 初始化之后：
+
+import com.isi.telemetry.DeferredAttributionBridge
+import com.isi.telemetry.KiteAnalytics
+
+// KiteAnalytics.wire(installId, emitInstallStart)  // 若项目已有
+DeferredAttributionBridge.init(this, BuildConfig.DEBUG)

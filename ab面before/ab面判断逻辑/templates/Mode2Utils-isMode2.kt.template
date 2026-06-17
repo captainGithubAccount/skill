@@ -1,0 +1,79 @@
+// 嵌入 {app_package}.util.mode2.Mode2Utils 的 isMode2() 核心段（V3.1.0 定稿）
+// 需配合：exists()、isCodeSubCheckEnabled()、isMasterSwitchForceA/B()、
+//        InstallationSourceChecker、isInstalledFromGooglePlay()
+
+private suspend fun isMode2(context: Context): Boolean = withContext(Dispatchers.IO) {
+
+    // ── 阶段 1：总开关 enable_mode2_with_video ──
+    if (isMasterSwitchForceB()) {
+        // RC 存在且 =1 → 强制 B
+        return@withContext true
+    }
+    if (isMasterSwitchForceA()) {
+        // RC 存在且 =0 → 强制 A
+        return@withContext false
+    }
+    // RC 不存在，或存在但值既非 0 也非 1 → 进入阶段 2
+
+    // ── 阶段 2：代码判断（总开关未强制 A/B 时进入；Release / Debug 相同）──
+    var hasApplicableCheck = false
+    var anyCheckFailed = false
+
+    // 买量渠道：子项 RC 不存在视为开启
+    if (isCodeSubCheckEnabled(enable_installation_source_condition)) {
+        hasApplicableCheck = true
+        if (!InstallationSourceChecker.isInstallFromAd()) {
+            anyCheckFailed = true
+        }
+    }
+
+    // Google Play 安装：子项 RC 不存在视为开启
+    if (isCodeSubCheckEnabled(enable_installed_from_google_play_condition)) {
+        hasApplicableCheck = true
+        if (!isInstalledFromGooglePlay(context)) {
+            anyCheckFailed = true
+        }
+    }
+
+    // 有执行过的检查且任一失败 → A；全部通过 → B
+    if (hasApplicableCheck && anyCheckFailed) {
+        return@withContext false
+    }
+    if (hasApplicableCheck && !anyCheckFailed) {
+        return@withContext true
+    }
+
+    // ── 阶段 3：兜底 A ──
+    return@withContext false
+}
+
+/** RC 是否由服务端下发（非 Firebase 静态默认值） */
+private fun exists(key: String): Boolean {
+    val value = FirebaseRemoteConfig.getInstance().getValue(key)
+    return value.source != FirebaseRemoteConfig.VALUE_SOURCE_STATIC
+}
+
+/** 代码子项开关：key 不存在视为 1；存在时仅 value==1 才执行检查 */
+private fun isCodeSubCheckEnabled(key: String): Boolean {
+    if (!exists(key)) return true
+    return getFirebaseRemoteConfigWithLong(key) == 1L
+}
+
+/** 读取 B 面总开关远程配置数值 */
+private fun getMode2MasterSwitchValue(): Long {
+    return getFirebaseRemoteConfigWithLong(enable_mode2_with_video)
+}
+
+/** 总开关 RC 存在且值为 1 → 强制 B */
+private fun isMasterSwitchForceB(): Boolean {
+    return exists(enable_mode2_with_video) && getMode2MasterSwitchValue() == 1L
+}
+
+/** 总开关 RC 存在且值为 0 → 强制 A */
+private fun isMasterSwitchForceA(): Boolean {
+    return exists(enable_mode2_with_video) && getMode2MasterSwitchValue() == 0L
+}
+
+const val enable_mode2_with_video = "enable_mode2_with_video"
+const val enable_installation_source_condition = "enable_installation_source_condition"
+const val enable_installed_from_google_play_condition = "enable_installed_from_google_play_condition"

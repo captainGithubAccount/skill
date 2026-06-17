@@ -1,0 +1,19 @@
+// settings.gradle.kts
+include(":app", ":AdBridge", ":admob", ":AdBase", ":Event")
+
+// app/build.gradle.kts
+dependencies {
+    api(project(":AdBridge"))
+    implementation(project(":Event"))  // 若埋点在同模块可调整
+}
+
+// AdBridge/build.gradle.kts
+dependencies {
+    implementation(project(":admob"))
+    implementation(project(":AdBase"))
+    implementation(libs.google.ads)
+}
+
+// libs.versions.toml
+// ads = "25.3.0"
+// google-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "ads" }

@@ -1,0 +1,40 @@
+// SplashLaunchPipeline.kt — 启动页 UMP 段（面向任意项目）
+// 依赖：portable/ 下 AdConsentManager、UmpGate（有 AdBridge 时用 MonetizationKit 作闸门）
+
+import com.isi.ump.AdConsentManager
+// 有 AdBridge: import com.isi.monetization.MonetizationKit
+// 无 AdBridge: import com.isi.ump.SimpleUmpGate
+
+// 常量：MIN_ANIM_MS=2000, MAX_AFTER_UMP_MS=10000, SPLASH_LOAD_TIMEOUT_MS=10000
+
+fun start() {
+    // 有 AdBridge: MonetizationKit.resetUmpResolvedForLaunchCycle()
+    // 无 AdBridge: SimpleUmpGate.resetUmpResolvedForLaunchCycle()
+    resetUmpGateForLaunchCycle()
+    if (isHotStart) markUmpGateResolved()
+    activity.lifecycleScope.launch { runPipeline() }
+}
+
+private fun applyUmpProgressVisibility() {
+    val hide = !isHotStart && AdConsentManager.willRunUmpGather(activity.applicationContext)
+    binding.splashProgress.visibility = if (hide) View.GONE else View.VISIBLE
+    binding.splashUmpWait.visibility = if (hide) View.VISIBLE else View.GONE
+}
+
+private suspend fun awaitConsent() {
+    if (AdConsentManager.hasCachedUmpConclusion(activity)) {
+        markUmpGateResolved()
+        return
+    }
+    val umpCallbacks = /* MonetizationKitUmpCallbacks 或 GateUmpFlowCallbacks(SimpleUmpGate) */
+    suspendCancellableCoroutine { cont ->
+        AdConsentManager(activity, umpCallbacks).requestGatherConsentAndInitAds(activity.lifecycleScope) {
+            markUmpGateResolved()
+            binding.splashUmpWait.visibility = View.GONE
+            binding.splashProgress.visibility = View.VISIBLE
+            if (cont.isActive) cont.resume(Unit)
+        }
+    }
+}
+
+// UMP 结束后：preload + loadSplash → awaitReleaseGate

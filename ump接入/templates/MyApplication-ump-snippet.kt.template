@@ -1,0 +1,18 @@
+// Application.onCreate — UMP Debug 配置（与 Release 分支相同，仅多测试设备 id）
+
+import com.isi.ump.AdConsentManager
+
+// 须在首次 gather 前设置
+AdConsentManager.isDebugBuild = BuildConfig.DEBUG
+
+if (BuildConfig.DEBUG) {
+    AdConsentManager.debugConfig = AdConsentManager.DebugConfig(
+        testDeviceHashedIds = AdConsentManager.DEFAULT_DEBUG_TEST_DEVICE_HASHED_IDS,
+    )
+}
+
+// 有 AdBridge 时并行预热（与 UMP 不互相阻塞）
+// applicationScope.launch(Dispatchers.IO) {
+//     MonetizationKit.prepareBeforeConsent(this@MyApplication)
+//     MonetizationKit.init(this@MyApplication) { /* bootstrap */ }
+// }

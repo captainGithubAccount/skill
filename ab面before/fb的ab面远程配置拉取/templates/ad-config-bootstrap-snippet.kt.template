@@ -1,0 +1,18 @@
+// 广告远程配置片段：bootstrap 内顺序（videodownload 定稿）
+// applyByMode 内部：先 assets 本地 → 远程有效则覆盖（非远程空才读 assets）
+
+suspend fun runAdConfigBootstrap(context: Context) = withContext(Dispatchers.IO) {
+    val interval = if (BuildConfig.DEBUG) 0L else 3600L
+
+    // 1. 拉取 RC（与通知等共用一次 fetch；须在 applyByMode 之前）
+    withTimeoutOrNull(8_000L) {
+        FirebaseRemoteConfigFetcher.fetchAndActivate(interval)
+        // 或 NotificationRemoteConfig.fetchActivateAndLog("AppAdsBootstrap")
+    }
+
+    // 2. isModeB（Mode2 + DebugAbOverride，见 ab面判断逻辑 skill）
+    val isModeB = /* ... */
+
+    // 3. 先本地后远程覆盖（单方法内两步）
+    AdRemoteConfigBridge.applyByMode(context, isModeB)
+}

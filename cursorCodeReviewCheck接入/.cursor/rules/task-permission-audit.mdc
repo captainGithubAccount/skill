@@ -1,0 +1,51 @@
+---
+description: 审计合并 Manifest 敏感权限，识别可安全 remove 的三方库权限并输出配置片段
+alwaysApply: false
+gradleChecks: '[{"type":"permissionAudit","scanRoots":["app/src/main","netLib/src/main"]}]'
+---
+
+# 敏感权限审计（Gradle task- 规则）
+
+本规则由手动任务 `cursorCodeReviewCheck` 执行，**不阻断构建、不打包**。
+
+运行 `./gradlew cursorCodeReviewCheck` 时，执行到本规则会将审计报告**覆盖写入**：
+
+```
+.cursor/buildTxt/task-permission-audit.txt
+```
+
+权限审计内容**不打印控制台**（其它 task- 规则仍正常打印）。调试时可加 `-PbuildTxt.echoToConsole=true`。
+
+每次执行 `cursorCodeReviewCheck` 只更新上述**同一文件**，不会额外生成 summary / index 等 txt。
+
+## 作用
+
+1. 扫描 **合并后 Manifest**（含三方库隐形声明的权限）
+2. 列出当前命中的 **敏感权限** 及来源库
+3. 结合 **源码静态扫描 + Gradle 依赖推断**，列出 **建议保留** 的权限及原因
+4. 列出 **可安全 `tools:node="remove"`** 的权限
+5. 直接输出可复制到 `app/src/main/AndroidManifest.xml` 的 **remove 配置片段**
+
+## 报告章节
+
+| 章节 | 内容 |
+|------|------|
+| 一 | 敏感权限（存储/媒体/位置/广告等分类） |
+| 二 | 合并清单全部 `uses-permission` + 来源库 |
+| 三 | 主 Manifest 已配置的 `tools:node="remove"` |
+| 四 | 建议保留（源码引用 / SDK 推断 / 内部权限） |
+| 五 | 可安全 remove 列表 |
+| 六 | 可复制粘贴的 Manifest remove XML |
+| 七 | 已 remove 但仍出现在合并清单的异常提示 |
+
+## 判定说明
+
+- **源码引用**：`android.permission.*`、`Permission.*`（XXPermissions）、`PictureSelector` / `openGallery` 等特征
+- **SDK 推断**：`firebase`、`install.referrer`、`pictureselector`、`androidx.work` 等依赖
+- **不可 remove**：`INTERNET`、`DYNAMIC_RECEIVER_*` 等签名/内部权限
+- 静态分析无法覆盖的运行时分支，移除后需人工回归测试
+
+## 维护
+
+- 敏感权限分类与 XXPermissions 映射见 `cursorTaskRules.gradle` 中 `PERMISSION_AUDIT_*` 常量
+- 新增依赖或选图/相机能力后，请重新运行 `cursorCodeReviewCheck` 并更新主 Manifest 的 remove 配置

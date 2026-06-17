@@ -1,0 +1,22 @@
+// Application.onCreate — PDF 现行：AB settlement 与广告预热 **并行**
+// 替换 {app_package}、Bootstrap 类名（PdfAppAdsBootstrap / AppAdsBootstrap）
+
+MMKV.initialize(this)
+FirebaseApp.initializeApp(this)
+
+// 协程 A：AB 双轨（不等待 MonetizationKit.init）
+applicationScope.launch(Dispatchers.IO) {
+    AppAdsBootstrap.run(context)
+    // 热启动可选：AppAdsBootstrap.run(context, hotResumeFastPath = true)
+}
+
+// 协程 B：广告 SDK + A 面 assets 铺底
+applicationScope.launch(Dispatchers.IO) {
+    MonetizationKit.prepareBeforeConsent(context)
+    AdRemoteConfigBridge.applyDefaultLocalAssetsA(context)
+    MonetizationKit.init(context) {
+        // isInit 就绪；Splash 内 UMP + 开屏
+    }
+}
+
+// videodownload 旧写法（仍可用）：init 回调内 run bootstrap — 启动略串行，PDF 已改为并行
