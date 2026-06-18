@@ -46,6 +46,17 @@
 - [ ] `applyModeUpdateAfterExtended` 仅 A→B
 - [ ] 15min 后 `isAbRevisionAllowed` 拒绝修订
 
+## 中途升 B（必接）
+
+- [ ] `notifyModeBUpgraded` 内调用 `schedulePreloadAfterLoadingOnBootstrapComplete`（或等价全量 B preload）
+- [ ] `applyRemoteConfigCore`（B 且已 commit）调用 `schedulePreloadAfterRemoteConfigRefresh`
+- [ ] `commitAbFace(B)` 调用 `preloadLanguageFunnelAfterModeBCommit` + `schedulePreloadAfterLoadingWhenReady`
+- [ ] **每个 B 专属广告页** 注册 `addOnModeBUpgradedListener` + `addOnAdRemoteConfigRefreshedListener`
+- [ ] listener 内 **preload + re-bind/show**（非仅 preload）
+- [ ] onDestroy/onDestroyView **移除** listener
+- [ ] 阶段2 升 B 场景：Logcat 可见补货 + 当前页广告出现（不必杀进程）
+- [ ] 见 [templates/mid-b-upgrade-snippet.kt.template](templates/mid-b-upgrade-snippet.kt.template)
+
 ## 自然 B 锁定
 
 - [ ] `updateLockedNaturalModeBIfChanged` 拒绝 B→A

@@ -36,6 +36,7 @@ alwaysApply: true
 3. **流程图必带改动标签**：每个节点末尾 `(新增)/(修改)/(删除)`，避免误删、误改。
 4. **§3 小步交付**：每轮默认 ≤2 文件；预计 >3 文件或 >100 行须**先报备**并等用户同意。
 5. **路径与 Git**：改代码前须复述 workspace 根路径 + 拟改文件绝对路径；须执行 `git status`/`git diff`，有 WIP 须说明合并策略，**未经确认不覆盖**。
+6. **三方初始化**：凡接入/调用三方 SDK（不限埋点），须完成 **§12 初始化链检查**；**禁止**只写业务调用不写 Application 级 init，**禁止**「有日志/无崩溃 = 已初始化」。
 
 ## 0.4 需求理解先行（**强制，第一门禁**）
 
@@ -184,6 +185,7 @@ flowchart TD
 | §11 改代码前门禁 | [x] | 写代码前路径复述 + git status/diff |
 | §9 代码名词双语 | [x] | 方案中含代码名须附中文含义 |
 | §10 埋点接入 | [ ]/[x] | 查重复上报 + 上报时打印事件名与参数 |
+| §12 三方初始化 | [ ]/[x] | 列出 init 链 + isReady + 验收，防遗漏 Application 初始化 |
 | `code-term-bilingual` | [x] | 准确表述，禁止误导性「必定/总是」 |
 | 其它已 @ 规则 | [ ]/[x] | 如 `cursor-feature-interpret` 等 |
 
@@ -383,6 +385,7 @@ flowchart TD
 - **跳过已有功能影响评估**：未单独说明对其它已有功能的影响（或无影响说明）、或未获用户确认就改共用代码
 - **跳过 §0.5**：未贴约束自检、未获用户确认就出方案或写代码
 - **跳过 §11**：未复述路径、未执行 git status/diff、或有 WIP 未说明合并策略就改文件
+- **跳过 §12**：接入/调用三方 SDK 未输出初始化链与就绪检查、未获确认就改代码；**禁止**「能编译/有 Log = 已 init」
 - **路径不一致仍改代码**：workspace 根路径或拟改文件路径与用户指定不一致时未停止询问
 - **流程图缺标签**：任务节点未标注 `(新增)/(修改)/(删除)`
 - 不假设 happy path 即完成
@@ -554,6 +557,8 @@ flowchart TD
 
 ### 10.5 本工程反例（勿复现）
 
+**反例 A — 同名事件双路径（空参翻倍）**
+
 `ad_show` 曾在曝光回调中同时调用：
 
 - `AdTracker.trackShow`（带 `ad_unit_id` / `ad_platform` / `ad_sense`）
@@ -561,46 +566,172 @@ flowchart TD
 
 导致 GA4 约一半 `ad_show` 无参。修复原则：**广告展示/点击只走 `AdTracker`**，勿再经 `DeferredAttributionBridge.emit` 发同名事件。
 
+**反例 B — 双套 `KiteAnalytics` 只 init 一套（PDF 曾踩坑）**
+
+- App 层 `com.pro.browser.telemetry.KiteAnalytics.wire()` 已执行
+- 广告/归因走 `com.isi.telemetry.KiteAnalytics.emit()`，但 Event 模块 **未 wire**
+- Logcat 有「事件=ad_request」类日志，**GA4 实际 0 条**；后台只剩 AdMob 自动 `ad_impression`
+
+修复原则：**全工程唯一 Firebase 实现在 Event 模块**；App 层只允许**门面 delegate**，禁止第二套 `FirebaseAnalytics.getInstance` + `logEvent`。
+
 ### 10.6 上报时 Logcat 日志（强制）
 
-**每一次**事件实际上报（Firebase / AF / Adjust 等经统一入口发出）时，**必须**在 Logcat 打印**事件名 + 完整参数**，便于联调与排查重复/缺参。
+**每一次**经统一入口**实际上报**（Firebase / AF / Adjust）时，须打印**事件名 + 完整参数**；**未 wire / 未就绪须 `Log.e` 并带 `SKIPPED_NOT_WIRED`，禁止用 `Log.i` 伪装成功**。
 
-#### 10.6.1 优先复用现有实现（禁止旁路裸打）
+#### 10.6.1 唯一上报入口（禁止双实现）
 
-本工程已有统一日志能力，**必须复用**，不得在业务层重复造轮子或直接 `firebaseAnalytics.logEvent` 而不打日志：
-
-| 组件 | 路径 | Logcat Tag | 说明 |
-|------|------|------------|------|
-| **Event 模块统一入口** | `Event/.../KiteAnalytics.kt` → `emit()` | `TAG-->>isi_埋点` | 上报前已 `Log.i`，格式：`事件=<name>  参数=<键值对>` |
-| **全量埋点日志** | `Event/.../EventAllLog.kt` → `log()` | `TAG-->>eventAll` | 由 `KiteAnalytics.emit` 内部调用；格式：`事件=<name> \| 参数=<键值对>` |
-| **参数格式化** | `KiteAnalytics.formatBundleForLog(bundle)` | — | 将 `Bundle` 格式化为可读键值串，**新增入口须复用** |
-| **App 层封装** | `app/.../telemetry/KiteAnalytics.kt` → `emit()` | `NitroPdf埋点` | 已有 `事件=<name> 参数=<params>`；**App 层新增上报须走此对象或 Event 模块 `emit` 扩展** |
-| **封装 Reporter** | `TelemetryReporter.*` | （经 `emit` 间接输出） | 业务优先调用 Reporter，底层仍须落到带日志的 `emit` |
+| 层级 | 路径 | 角色 |
+|------|------|------|
+| **唯一实现** | `Event/.../KiteAnalytics.kt` → `wire()` / `emit()` / `isReady()` | Firebase + EventAllLog + 广告类 AF/Adjust 分支 |
+| **App 门面（可选）** | `app/.../telemetry/KiteAnalytics.kt` | **仅 delegate** 到 Event 模块，禁止自建 `FirebaseAnalytics` |
+| **广告** | `AdBridge/.../AdTracker.kt` | `trackRequest*` / `trackShow` / `trackClick` → Event `emit` |
+| **归因** | `AttributionManager` 等 | `com.isi.telemetry.TelemetryCatalog.*.emit` |
+| **业务封装** | `TelemetryReporter.*` | 内部仍须落到 Event `emit` |
 
 **接入原则**：
 
-1. **新增埋点** → 使用 `TelemetryCatalog.xxx.emit(bundle)` 或 `KiteAnalytics.emit(event, bundle)`，**禁止**绕过统一入口。
-2. **已有 Reporter 方法** → 优先扩展 `TelemetryReporter`，内部仍调用 `emit`。
-3. **广告类事件** → 走 `AdTracker.trackShow` / `trackClick` / `trackRequest*`，勿在业务层再 `emit` 同名事件。
-4. **若必须新增非 Firebase 直上报口**（如 Meta `FacebookEventsDelegate`）→ 在实际上报前/后调用 `EventAllLog.log(eventName, bundle)`，或同等格式自建日志（**事件名 + 全部参数**）。
-5. **禁止**仅打印事件名不打印参数；**禁止**在 Debug 才打印（埋点日志须 **Release 也可查**，与 `AdRequestLog` 策略一致）。
+1. **新增埋点** → `TelemetryCatalog.xxx.emit(bundle)` 或 `AdTracker.*`；**禁止**业务层 `FirebaseAnalytics.getInstance().logEvent`。
+2. **禁止**新建第二套 `KiteAnalytics` / `AnalyticsHelper`；若 App 需门面，只能 **delegate**。
+3. **广告类** → 只走 `AdTracker`；**禁止** `DeferredAttributionBridge.emit` 发同名 `ad_show`/`ad_click`。
+4. **Logcat Tag**：`TAG-->>isi_埋点`（主）、`TAG-->>eventAll`（全量）；成功 Firebase 须有 `已上报Firebase:` 行；失败须有 `上报失败(未 wire)` 或 `SKIPPED_NOT_WIRED`。
+5. **禁止**仅打印事件名不打印参数；**禁止**只在 Debug 打印（Release 须可联调）。
 
 #### 10.6.2 Logcat 过滤命令
 
 ```bash
-adb logcat -s "TAG-->>eventAll:I" "TAG-->>isi_埋点:I" "NitroPdf埋点:I"
+adb logcat -s "TAG-->>eventAll:I" "TAG-->>isi_埋点:I" "TAG-->>isi_埋点:E"
 ```
 
 #### 10.6.3 验收（埋点任务必含）
 
-接入完成后，在验收清单中增加：
+- [ ] `Application` 启动后 Logcat 可见 **`wire 成功`**（无 `wire 失败`）
+- [ ] 触发业务动作：有 **`已上报Firebase:`**，**无** `SKIPPED_NOT_WIRED` / `上报失败(未 wire)`
+- [ ] 参数行含**全部业务字段**（与 `Bundle` 一致）
+- [ ] Firebase DebugView / GA4 实时可看到对应**自定义事件名**（不能只用 AdMob 自动 `ad_impression` 代替 `ad_show`）
+- [ ] 无重复路径导致同动作两条同名事件（或已按 §10.3 修复）
 
-- [ ] 触发一次业务动作，Logcat 可见对应**事件名**
-- [ ] 同一条日志含**全部业务参数**（与 `Bundle` 一致，含 `attr_*` 等）
-- [ ] 无重复路径导致同动作出现两条同名事件日志（或已按 §10.3 修复）
+### 10.8 统一入口与初始化门禁（**强制**）
+
+埋点接入 / Bug 修复 / 新建模块时，**写代码前**须完成：
+
+#### 10.8.1 入口清点（须 grep）
+
+```bash
+rg "FirebaseAnalytics\.getInstance|\.logEvent\(" --glob "*.kt"
+rg "object KiteAnalytics|fun String\.emit" --glob "*.kt"
+```
+
+- 除 `Event/.../KiteAnalytics.kt` 外，**不得**再有 `logEvent` 实现。
+- 发现 App/模块第二套入口 → 改为 delegate 或删除，**禁止**只 wire 其中一套。
+
+#### 10.8.2 初始化链检查
+
+| 检查项 | 要求 |
+|--------|------|
+| 调用顺序 | `FirebaseApp.initializeApp` → **`com.isi.telemetry.KiteAnalytics.wire()`**（可由 App 门面触发）→ 任意 `emit` |
+| 就绪 API | 使用 `KiteAnalytics.isReady()`；未就绪时 **不得**声称「已接入完成」 |
+| 默认参数 | `install_id` / `device_id` / `app_version` 等在 `wire` 一次写入 |
+
+#### 10.8.3 交付时禁止项
+
+- **禁止**「Logcat 有打印 = 已上报」——须区分 `已上报Firebase` vs `SKIPPED_NOT_WIRED`
+- **禁止**只改 `AdTracker` 却不确认 Event `wire` 在 Application 已执行
+- **禁止**业务模块 `import` 两套 `emit`（`com.pro.browser.telemetry.emit` 与 `com.isi.telemetry.emit` 底层须同一实现）
+
+#### 10.8.4 方案模板（埋点类必附）
+
+```markdown
+## 埋点上报链（单一路径）
+
+| 事件 | 触发点 | 上报链 | wire 依赖 |
+|------|--------|--------|-----------|
+| ad_request | SplashAdLoader | AdTracker → Event KiteAnalytics → Firebase | Application wire ✅ |
+| install_final_result | AttributionManager | TelemetryCatalog.emit → Event KiteAnalytics | 同上 |
+```
 
 ### 10.7 与其它章节的关系
 
 - 与 §0.5：**并行**——埋点接入仍须先约束自检、路径确认、用户「确认」后再写代码
 - 与 §9 `code-term-bilingual`：检查说明中的类名/方法名须附中文含义
-- 本节**不替代**需求理解与验收清单，强制「先查重 → 上报走统一入口并打日志 → 再方案 → 再代码」
+- 与 §11：改埋点入口 / Application 初始化时，§11 Git 检查须覆盖 `MyApplication` 与 `Event/.../KiteAnalytics.kt`
+- 与 §12：**§10 为 §12 在 Telemetry 场景的专则**；其它三方 SDK 仍须单独走 §12 初始化链
+- 本节**不替代**需求理解与验收清单，强制顺序：**§12/§10.8 入口清点 → §10.2 查重（埋点）→ init 就绪 → 再方案 → 再代码**；**禁止**「仅 Logcat 有字 = 已上报/已 init」
+
+## 12. 三方 SDK 接入门禁（初始化强制检查）
+
+凡**接入、调用、封装**任意第三方 SDK / 远程服务（不限于埋点），须防止「业务层已写调用、Application 未 init / 只 init 一套门面」类遗漏。与 §10 **并行**：埋点额外遵守 §10；**所有三方**均须遵守本节。
+
+### 12.0 规则标识（三方接入类任务必显）
+
+命中 §12.1 时，回复须写明（可与 §0 标识同条）：
+
+> 📌 已基于约束 §12 完成三方初始化链检查
+
+未完成 §12.2 检查前：**禁止**写代码或声称「已接入完成」。
+
+### 12.1 触发范围
+
+命中以下**任一**即适用本节（含但不限于）：
+
+`接入` `集成` `SDK` `三方` `第三方` `AdMob` `Firebase` `Remote Config` `UMP` `Adjust` `AppsFlyer` `Meta` `Facebook` `Install Referrer` `FCM` `Billing` `Play Services` `SPI` `MonetizationKit` `DeferredAttributionBridge`
+
+**不适用**：纯读代码解释、与三方无关的 UI/业务逻辑——仍显示 §0 标识，可跳过 §12 检查块。
+
+### 12.2 写代码前必做：初始化链清单（强制）
+
+在方案或改文件**之前**，对**每一个**将被业务调用的三方，输出下表（不得省略行）：
+
+| 三方 / 能力 | init 入口（类.方法） | 调用时机（Application/Activity/…） | 前置依赖 | 就绪判定（isReady / 回调 / 标志位） | 未 init 时业务行为 |
+|-------------|---------------------|-----------------------------------|----------|-------------------------------------|-------------------|
+| 例：Firebase Analytics | `KiteAnalytics.wire()` | `MyApplication.onCreate` 在 `FirebaseApp.initializeApp` 之后 | FirebaseApp | `KiteAnalytics.isReady()` | emit 打 `SKIPPED_NOT_WIRED`，不上报 |
+| 例：Adjust | `AdjustSdkUtil.init()` | `DeferredAttributionBridge.init` | local.properties token | `AdjustSdkUtil.isReady` | 跳过 track，打 warn |
+| … | … | … | … | … | … |
+
+**硬性要求**：
+
+1. **单点 init**：同一能力全工程 **唯一** init 链；禁止 Module A `wire`、Module B 裸调 SDK 却无 init。
+2. **顺序写清**：如 `FirebaseApp.initializeApp` → `KiteAnalytics.wire` → 任意 `emit` / `fetch`。
+3. **就绪 API**：优先复用现有 `isReady` / `isInitialized`；**若无则接入时须新增**（含失败 `Log.e`），禁止 silent no-op。
+4. **配置缺失**：token / appId 未配置时须 **显式 warn + 跳过**，并在方案中说明 Release 配置来源（如 `local.properties`）。
+5. **门面 delegate**：App 层只允许转发到模块内唯一实现（参见 §10.5 反例 B）。
+
+#### 12.2.1 检索命令（须实际执行或等价搜索）
+
+```bash
+# 谁在用 SDK（调用侧）
+rg "Adjust\.|AppsFlyerLib|MobileAds\.|FirebaseRemoteConfig|InstallReferrerClient|FacebookSdk" --glob "*.kt"
+
+# 谁负责 init（初始化侧）
+rg "\.init\(|\.initialize\(|\.wire\(|prepareBeforeConsent|DeferredAttributionBridge\.init" --glob "*.kt" -g "*Application*"
+
+# 是否双入口（常见遗漏）
+rg "object \w+Kit|object \w+Bridge|FirebaseAnalytics\.getInstance" --glob "*.kt"
+```
+
+**判定遗漏**：调用侧文件 **有**、init 链 **无** 或 init 在 **与业务无关** 的路径 → 方案须补 Application 级 init，**禁止**假设「别处会 init」。
+
+### 12.3 方案必附：初始化链简图
+
+三方接入方案须含 Mermaid 或表格，至少：**启动 → init → 就绪 → 首次业务调用**；异步 init 须标 **超时/失败 fallback**。
+
+### 12.4 验收清单（交付必附）
+
+- [ ] 冷启 Logcat / 文档约定 Tag 可见 **init 成功**（无「跳过 init / token 未配置」除非 Release 故意不配）
+- [ ] 就绪 API 为 **true** 后再触发业务动作
+- [ ] 业务动作达到**预期三方侧效果**（GA4 事件、广告 load、referrer 写入等），**不能**仅用「没崩溃」代替
+- [ ] 未 init 路径有 **Log.e 或等价明确失败**，非静默吞掉
+- [ ] §0.4 影响表中列出的**其它已有三方能力**回归正常
+
+### 12.5 禁止事项（三方专用）
+
+- **禁止**只加 `XxxManager.doSomething()` 不在 `Application`（或文档指定单点）补 `Xxx.init`
+- **禁止**两套封装各 init 一次或各 **不** init 一次（双门面遗漏）
+- **禁止**「Logcat 有业务日志 = SDK 已工作」（须区分 init 成功 vs skipped）
+- **禁止**未配置 key 时在 Release 静默失败且无文档说明
+- **禁止**跳过 §12.2 表直接改代码
+
+### 12.6 与其它章节的关系
+
+- 与 §0.4 / §0.5 / §11：三方接入仍须理解确认 → 约束自检（§0.5.3 勾选 §12）→ §11 → 再代码
+- 与 §10：Telemetry 是 §12 子集；§10.2 查重 + §10.8 入口清点 **叠加** §12.2，不互相替代
+- 与 §6 交付：三方任务验收清单须含 §12.4，**不能**只贴 §6 通用项

@@ -20,3 +20,8 @@ applicationScope.launch(Dispatchers.IO) {
 }
 
 // videodownload 旧写法（仍可用）：init 回调内 run bootstrap — 启动略串行，PDF 已改为并行
+
+// --- 中途升 B（必接，见 mid-b-upgrade-snippet.kt.template）---
+// PdfAppAdsBootstrap.notifyModeBUpgraded → AdPreloadCoordinator.schedulePreloadAfterLoadingOnBootstrapComplete()
+// applyRemoteConfigCore(B) → AdPreloadCoordinator.schedulePreloadAfterRemoteConfigRefresh()
+// 各 B 广告页：addOnModeBUpgradedListener + addOnAdRemoteConfigRefreshedListener → preload + bind

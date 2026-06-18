@@ -1,0 +1,38 @@
+// 中途升 B — 业务页 listener 模板（必接）
+// 替换 {Bootstrap}、{AdSense}、refreshBAds 具体实现
+
+private val modeBAdGateListener: () -> Unit = {
+    if (isFinishing || isDestroyed) return@modeBAdGateListener  // Activity；Fragment 用 !isAdded
+    refreshBAds()
+}
+
+override fun initView() {
+    // … 原有 UI …
+    {Bootstrap}.addOnModeBUpgradedListener(modeBAdGateListener)
+    {Bootstrap}.addOnAdRemoteConfigRefreshedListener(modeBAdGateListener)
+    // 首次进入：仅 B 面才 preload（勿 A 面浪费请求）
+    if ({Bootstrap}.currentIsModeB()) {
+        refreshBAds()
+    }
+}
+
+override fun onDestroy() {  // Fragment 用 onDestroyView
+    {Bootstrap}.removeOnModeBUpgradedListener(modeBAdGateListener)
+    {Bootstrap}.removeOnAdRemoteConfigRefreshedListener(modeBAdGateListener)
+    super.onDestroy()
+}
+
+/** 升 B / FC 刷新后：先 preload，再 bind/show（禁止只 preload 不 bind） */
+private fun refreshBAds() {
+    if (!{Bootstrap}.currentIsModeB()) return
+    if (!{Bootstrap}.canShowAd({AdSense}.LANGUAGE_NATIVE)) {
+        hideAdContainer()
+        return
+    }
+    preloadAd({AdSense}.LANGUAGE_NATIVE, "B面升级-补货")
+    bindNativeAd(...)  // 或 showBanner / refreshListNativeRow
+}
+
+// Bootstrap 侧（PdfAppAdsBootstrap / AppAdsBootstrap）须已有：
+// - notifyModeBUpgraded → AdPreloadCoordinator.schedulePreloadAfterLoadingOnBootstrapComplete()
+// - applyRemoteConfigCore(B) → AdPreloadCoordinator.schedulePreloadAfterRemoteConfigRefresh()

@@ -101,6 +101,54 @@ needsExtendedReferrerRetry():
 - `updateLockedNaturalModeBIfChanged`：仅 A→B
 - `applyModeUpdateAfterExtended`：刷新广告 RC + notifyModeBUpgraded / modeSideChanged
 
+## 中途升 B
+
+> **强制要求**：任何接入 AB 面的项目须实现本节；否则阶段2 升 B 或 commit 晚于进页时，**本次启动**看不到 B 专属广告。
+
+### 与「一次判 A 锁死」的区别
+
+| 误解 | 实际 |
+|------|------|
+| 先 commit A → 本次永远 A | 15min 内阶段2 / FC 总开关可 **A→B**，同进程可升 |
+| 升 B 后自动有广告 | 须 **JSON + preload + UI** 三线补齐 |
+| 只加 listener 就够 | 还须 Bootstrap 内 **Coordinator 补货** |
+
+### 触发链（Bootstrap）
+
+```
+applyModeUpdateAfterExtended / commitAbFace(B)
+  → applyRemoteConfigCore                    // ① B JSON
+  → schedulePreloadAfterRemoteConfigRefresh  // ② FC/B JSON 后补 preload
+  → notifyAdRemoteConfigRefreshed()          // ③ UI 可重绑
+  → notifyModeBUpgraded()
+       → 各页 listener
+       → schedulePreloadAfterLoadingOnBootstrapComplete
+  → preloadLanguageFunnelAfterModeBCommit
+```
+
+### Coordinator 补货（见 admob广告 skill）
+
+| 方法 | 时机 |
+|------|------|
+| `schedulePreloadAfterLoadingWhenReady` | Splash / notifyModeBUpgraded；await commit 30s |
+| `schedulePreloadAfterRemoteConfigRefresh` | 每次 B 且已 commit 的 applyRemoteConfigCore |
+| `preloadLanguageFunnelAfterModeBCommit` | commit / bootstrap 补调度 |
+
+### 业务页 listener（PDF 金样）
+
+| 页面 | refresh |
+|------|---------|
+| `LanguageActivity` | preload + bindLanguageNativeAd |
+| `MainActivity` | refreshHomeBanner(forceReload) |
+| `BookmarksFragment` / `ToolsFragment` | preload + 列表/容器 re-bind |
+| `ConvertFinishActivity` | bindSuccessNativeAd |
+
+### 仍无 B 广告的合法情况
+
+- commit 即为 A 且 15min 内未升 B
+- B 面但远程 `ad_config_b` 始终为空
+- 订阅 / 配额 / UMP 未过
+
 ## Mode2 判面
 
 `exists(key)` := `getValue(key).source != VALUE_SOURCE_STATIC`
@@ -135,14 +183,16 @@ needsExtendedReferrerRetry():
 - B 专属位：**按项目**在 bootstrap 登记（PDF 见 `modeBExclusive` Set）
 - 开屏：非 B 专属
 
-## Bootstrap 监听（PDF）
+## Bootstrap 监听（PDF）— 中途升 B 必用
 
-| API | 用途 |
-|-----|------|
-| `addOnModeBUpgradedListener` | A→B 或 commit 即为 B |
-| `addOnModeSideChangedListener` | 任意面别变化 |
-| `addOnAdRemoteConfigRefreshedListener` | FC/commit 后广告 RC 刷新，UI 重绑 |
-| `emitShowModelBIfNeeded` | 首次 B 面 `show_model_b` 埋点 |
+| API | 用途 | 中途升 B |
+|-----|------|----------|
+| `addOnModeBUpgradedListener` | A→B 或 commit 即为 B | **必接**：补 preload + 重绑 UI |
+| `addOnModeSideChangedListener` | 任意面别变化 | B→A 时隐藏 B 位（自然 B 锁定时少见） |
+| `addOnAdRemoteConfigRefreshedListener` | FC/commit 后广告 RC 刷新 | **必接**：B JSON 晚到时 re-bind |
+| `notifyModeBUpgraded` 内调 Coordinator | 全量 B preload | **必接**（PDF：`schedulePreloadAfterLoadingOnBootstrapComplete`） |
+| `applyRemoteConfigCore` 内调 Coordinator | FC 刷新补货 | **必接**（PDF：`schedulePreloadAfterRemoteConfigRefresh`） |
+| `emitShowModelBIfNeeded` | 首次 B 面 `show_model_b` 埋点 | 可选 |
 
 ## 热启动 fast path
 
@@ -165,7 +215,9 @@ PDF 金样：Application 始终 `run(context)` 无参；接口预留供启动页
 | 场景 | 结果 |
 |------|------|
 | 买量+GP，阶段1 成功 | B |
-| 阶段1 超时 | 先 A，可能阶段2 升 B |
+| 阶段1 超时 | 先 A，可能阶段2 升 B → **须 listener+补货** |
+| 中途 A→B（阶段2） | `applyModeUpdateAfterExtended` → 三线补齐 → 当前页可出 B 广告 |
+| FC 晚于 commit | `schedulePreloadAfterRemoteConfigRefresh` + RC listener |
 | FC 8s 超时 ×3 | 仍 fcReady；广告用 assets + SDK 缓存 |
 | B commit 后远程 B 空 | 后台补拉最多 3 次 |
 | 总开关=22 | 不强制，走子项 |
@@ -177,6 +229,8 @@ PDF 金样：Application 始终 `run(context)` 无参；接口预留供启动页
 |------|------|
 | AbSettlementCoordinator | `app/.../util/mode2/AbSettlementCoordinator.kt` |
 | PdfAppAdsBootstrap | `app/.../bootstrap/PdfAppAdsBootstrap.kt` |
+| AdPreloadCoordinator | `app/.../ads/AdPreloadCoordinator.kt`（升 B / FC 补货） |
+| LanguageActivity | `app/.../page/lang/LanguageActivity.kt`（listener 示例） |
 | Mode2Utils | `app/.../util/mode2/Mode2Utils.kt` |
 | AttributionManager | `app/.../util/mode2/AttributionManager.kt` |
 | AppRemoteConfig | `app/.../config/AppRemoteConfig.kt` |

@@ -2,8 +2,9 @@
 name: ab-mode-config
 description: >-
   Android A/B 面（Mode2）完整接入：双轨 FC+归因并行、FC 最多3次重试、B面远程补拉、
-  Mode2 判面、commit、归因阶段2 阶梯重试、广告/通知按面 apply、FC 8s/30s 超时、assets 先铺底。
-  当用户提到 AB 面、A/B 面、Mode2、isModeB、enable_mode2_with_video、
+  Mode2 判面、commit、归因阶段2 阶梯重试（中途 A→B）、广告/通知按面 apply、
+  升 B 监听+FC 补货+页面重绑、FC 8s/30s 超时、assets 先铺底。
+  当用户提到 AB 面、A/B 面、Mode2、isModeB、中途升B、A→B、enable_mode2_with_video、
   AbSettlementCoordinator、归因阶段2、ad_config_a/b、审核面/买量面 时应用。
 ---
 
@@ -47,8 +48,61 @@ description: >-
 4. 有子项参与且**任一失败** → A；**全部通过** → B；两子项均 =0 → 默认 A
 5. **自然 B 永久锁定**，禁止 B→A（含总开关改 0）
 6. 归因阶段1 不确定 → 先 commit A → **阶段2** 15min 内仅 **A→B**
+7. **中途升 B 不是可选优化，是必接能力**：首次 commit 为 A 或进页早于 commit 时，须在 **15min 内 A→B** 后让用户仍能请求/展示 B 专属广告（见 [中途升 B（必接）](#中途升-b必接)）
 
 **PDF 现行代码子项（实际启用）**：Install Referrer 买量 + Google Play 安装；模拟器/IP/强制 A 时段等保留代码但默认未启用。
+
+## 中途升 B（必接）
+
+> **一句话**：判面可在 **同一次启动、用户仍在页面上** 时从 A 升到 B；**仅改 `isModeB` 不够**，必须同时 **换 B 广告 JSON → 补 preload → 当前页重绑/展示**。
+
+### 何时会「中途升 B」
+
+| 触发 | 代码锚点 | 用户仍在 |
+|------|----------|----------|
+| 阶段1 不确定先 commit A，阶段2 拉到买量 refer | `applyModeUpdateAfterExtended` | 语言页 / Splash 后任意页 |
+| FC 总开关晚到且 =1 | `naturalModeBIfMasterSwitchOverridesCommitted` | 同上 |
+| 首次 commit 即为 B，但进页 **早于** commit | `commitAbFace` → `notifyModeBUpgraded` | 语言页 / 主页 |
+
+**不是**「一次判 A 本次启动永远没 B 广告」——15min 内升到 B 且 JSON 生效后，**本次进程**应能展示 B 位。
+
+### 三层必做（缺一不可）
+
+```mermaid
+flowchart TD
+    UP["isModeB: false→true"] --> RC["① applyRemoteConfigCore\nB 方案 JSON"]
+    RC --> PL["② 补 preload\nWhenReady / FC补货 / 语言漏斗"]
+    RC --> UI["③ 页面 listener\npreload + bind/show"]
+    PL --> OK["B 专属位可请求可展示"]
+    UI --> OK
+```
+
+| 层 | Bootstrap / Coordinator | 业务页 |
+|----|-------------------------|--------|
+| **① 换配置** | `applyRemoteConfigCore` → `applyByMode(B)`；`onFirebaseFetchCompleted` | — |
+| **② 补请求** | `notifyModeBUpgraded` → `schedulePreloadAfterLoadingOnBootstrapComplete`；`applyRemoteConfigCore` → `schedulePreloadAfterRemoteConfigRefresh`；`preloadLanguageFunnelAfterModeBCommit` | — |
+| **③ 刷新 UI** | `notifyModeBUpgraded` / `notifyAdRemoteConfigRefreshed` | 各含 B 广告页注册 listener → **preload + re-bind/show** |
+
+详见 [reference.md#中途升-b](reference.md#中途升-b)。
+
+### 业务页最低要求
+
+凡 **B 专属广告**（语言原生/插屏、Banner、底栏插屏、大原生等）所在 **Activity/Fragment**，须至少：
+
+```kotlin
+// initView / onViewCreated 注册；onDestroy/onDestroyView 移除
+PdfAppAdsBootstrap.addOnModeBUpgradedListener { refreshBAds() }
+PdfAppAdsBootstrap.addOnAdRemoteConfigRefreshedListener { refreshBAds() }
+
+private fun refreshBAds() {
+    // 1. 若 currentIsModeB() && canShowAd → preloadAd
+    // 2. 再 bindNativeAd / showBanner / 刷新列表原生行（勿只 preload 不 bind）
+}
+```
+
+**金样参考**：`MainActivity`（Banner）、`LanguageActivity`（preload+bind）、`BookmarksFragment` / `ToolsFragment` / `ConvertFinishActivity`（大原生）。
+
+**禁止**：只在 `onCreate` 读一次 `isModeB` 且无 listener —— commit 晚于进页时 B 用户整页无广告。
 
 ## 接入前：扫描目标项目
 
@@ -119,12 +173,20 @@ applicationScope.launch(Dispatchers.IO) {
 
 **热启动**（可选）：`run(context, hotResumeFastPath = true)` 跳过重复 settlement；videodownload 在 `StartActivity` 接线，PDF 金样 Application 始终冷启路径。
 
-### Step 4：业务读面别
+### Step 4：业务读面别 + **中途升 B 接线（必做）**
 
 - 面别：`AppAdsBootstrap.isModeB` / `currentIsModeB()` / `canShowAd(sense)`
 - **B 专属广告位按项目登记**（PDF 5 位：语言原生/插屏、首页 Banner、底栏插屏、共享大原生；videodownload 10 位更多）
 - 开屏**非** B 专属；与 commit **竞态**（commit 前多 A JSON）
-- 升 B 监听：`addOnModeBUpgradedListener` / `addOnModeSideChangedListener` / `addOnAdRemoteConfigRefreshedListener`
+- **Bootstrap 监听（必接）**：
+  - `addOnModeBUpgradedListener` — A→B 或 commit 即为 B
+  - `addOnAdRemoteConfigRefreshedListener` — FC/commit 后 B JSON 刷新
+  - `addOnModeSideChangedListener` — 含 B→A 降级场景（自然 B 锁定时少见）
+- **Coordinator 补货（必接，见 [admob广告](../admob广告/SKILL.md)）**：
+  - `notifyModeBUpgraded` 内 → `schedulePreloadAfterLoadingOnBootstrapComplete`
+  - `applyRemoteConfigCore`（B 且已 commit）→ `schedulePreloadAfterRemoteConfigRefresh`
+  - `commitAbFace` → `preloadLanguageFunnelAfterModeBCommit` + `schedulePreloadAfterLoadingWhenReady`
+- **每个 B 广告页**：listener 内 **preload + re-bind/show**（见 [中途升 B（必接）](#中途升-b必接)）
 
 ### Step 5：验证
 
@@ -151,17 +213,20 @@ applicationScope.launch(Dispatchers.IO) {
 | `AbSideManager` 简单 A/B | 映射到 `AppAdsBootstrap` + Mode2 |
 | 无阶段2 | 补 `AttributionManager` 阶梯与 `applyModeUpdateAfterExtended` |
 | FC 只拉 1 次 | 建议对齐 PDF：3 次重试 + B 面补拉 |
+| **无中途升 B 处理** | **必补**：Bootstrap 双 listener + Coordinator FC 补货 + 各 B 广告页 refresh |
+| 页面只读一次 `isModeB` | 改 listener + preload + bind |
 
 ## 关键约定
 
 1. **assets ≠ 判面**：本地 JSON 只兜底广告，不决定 Mode2
 2. **缓存 RC** = Firebase SDK 上次 activate 磁盘值，**非** App SP/MMKV
-3. 注释使用**简体中文**
-4. 禁止在 `canShowAd` 外私加 BuildConfig 广告兜底
-5. Firebase 广告 key 名因项目而异（skill 默认 `ad_config_a/b`；接项目时读 `AdRemoteConfigBridge` 常量）
+3. **中途升 B 必接**：`isModeB` 变更 → JSON + preload + 页面 listener，**禁止**假设 commit 一定早于所有广告页
+4. 注释使用**简体中文**
+5. 禁止在 `canShowAd` 外私加 BuildConfig 广告兜底
+6. Firebase 广告 key 名因项目而异（skill 默认 `ad_config_a/b`；接项目时读 `AdRemoteConfigBridge` 常量）
 
 ## 附加资源
 
 - [reference.md](reference.md) — FC 重试、B 补拉、阶段2、场景表
-- [templates/](templates/) — Bootstrap / Coordinator 片段
+- [templates/](templates/) — Bootstrap / Coordinator / **中途升 B listener** 片段
 - [admob广告](../admob广告/SKILL.md) — 广告模块与 `canShowAd` 闸门

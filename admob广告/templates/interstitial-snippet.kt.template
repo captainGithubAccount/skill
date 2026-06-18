@@ -10,12 +10,16 @@ override fun onCreate(savedInstanceState: Bundle?) {
 }
 
 private fun onConfirmLanguage() {
-    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
-        launchMain()
-        return
-    }
-    showAd(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认插屏") {
-        launchMain()  // 无论是否展示都继续业务
+    lifecycleScope.launch {
+        if (!PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
+            launchMain()
+            return@launch
+        }
+        // 确认点短等：用户已点按钮，可 ensure（非 Splash 长链 await）
+        ensureInterstitialCached(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认前补货")
+        showAd(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认插屏") {
+            launchMain()  // 无论是否展示都继续业务
+        }
     }
 }
 

@@ -16,14 +16,15 @@
 
 | 函数 | 用途 |
 |------|------|
-| `preloadAd(sense, scene)` | 后台预加载（协程 fire-and-forget） |
-| `preloadAdAwait` | 协程内 await 预加载 |
-| `loadAd(sense, timeoutMs, scene)` | 同步加载不展示（开屏用） |
+| `preloadAd(sense, scene)` | 后台预加载（fire-and-forget）；**开屏 UMP 后唯一请求入口** |
+| `preloadAdAwait` | 协程内 await；**禁止** Splash 开屏路径；仅 Coordinator 后台 |
+| `SplashAdLoader.isReady(sense)` | 开屏放行闸：Loader/SDK 是否有货 |
+| `SplashAdLoader.obtainForShow(activity, sense, scene)` | 开屏展示：**只读缓存**，无货返回 null |
+| `loadAd(sense, timeoutMs, scene)` | **开屏管线禁用**；非 Splash 特殊场景 |
 | `takeCachedAd(sense)` | 取缓存不请求 |
-| `showAd(sense, scene) { shown }` | 插屏=仅缓存；开屏=loadAd 路径 |
-| `bindNativeAd(sense, container, useLargeLayout, scene)` | 原生绑定；无缓存隐藏容器 |
-| `showNativeAd` | 同 bind，带 onComplete |
-| `ensureInterstitialCached` | 展示前确保插屏 SDK 有货 |
+| `showAd(sense, scene) { shown }` | 插屏=仅缓存 |
+| `bindNativeAd(...)` | 原生绑定 |
+| `ensureInterstitialCached` | 语言确认等单点补货 |
 
 Fragment 有同名扩展（`FragmentAdExt.kt`）。
 
@@ -54,18 +55,38 @@ onDestroy → NativeAd.destroy()（扩展内已注册）
 
 `SHARED_LARGE_NATIVE`：列表 1/6/11/16 穿插；无缓存 400ms 后重试 bind。
 
-### 开屏（启动页）
+### 开屏（Loading 页 · PDF 金样）
+
+详见 **[splash-loading.md](splash-loading.md)**。
+
+```
+UMP 结束 → preloadAd(LOADING_SPLASH) ×1
+         → 其它位后台 preload（不含开屏）
+         → 放行闸：≥2s 且 (isReady 或 UMP+10s)
+         → obtainForShow：有缓存 show，无缓存跳页
+```
 
 ```kotlin
-// SplashLaunchPipeline
-lifecycleScope.launch {
-  val ad = loadAd(LOADING_SPLASH, timeoutMs = 10_000, scene = "冷启开屏")
-  ad?.show(activity) { splashAd.destroy(); onNavigateNext() }
-    ?: onNavigateNext()
+// SplashLaunchPipeline — templates/splash-snippet.kt.template
+private fun requestSplashOnceAfterUmp() {
+    if (!canShowAd(LOADING_SPLASH)) return
+    activity.preloadAd(LOADING_SPLASH, "UMP后开屏单次请求")
+}
+
+private fun tryPassReleaseGate(now: Long): Boolean {
+    if (now - startElapsed < MIN_ANIM_MS) return false
+    if (now >= adPhaseStartElapsed + MAX_AFTER_UMP_MS) return true
+    return SplashAdLoader.isReady(LOADING_SPLASH)
+}
+
+private suspend fun showSplashOrNavigate() {
+    val ad = SplashAdLoader.obtainForShow(activity, LOADING_SPLASH, "Loading开屏展示")
+    if (ad != null) ad.show(activity) { onNavigateNext() }
+    else onNavigateNext()
 }
 ```
 
-冷启须 `isInit && isUmpResolved`（见 ump skill）。UMP 后 10s 硬截止可丢弃 splashAd 直跳。
+冷启须 `isInit && isUmpResolved`。曝光后补货走 `AdReplenishCoordinator`，不在 Loading 后再 `preloadAdAwait(开屏)`。
 
 ### Banner（PDF 主页）
 

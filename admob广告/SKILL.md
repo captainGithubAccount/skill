@@ -2,9 +2,9 @@
 name: admob-ad-monetization
 description: >-
   Android AdMob 广告层可移植接入：AdBridge/admob/AdBase 模块、AdSense 广告位、
-  preload/bindNativeAd/showAd/loadAd/Banner 展示 API、远程 JSON 配置、MonetizationKit 双闸门、
-  AdRequestLog/VModifyLog 排查。当用户提到 AdMob、广告位、原生/插屏/开屏/Banner、preloadAd、
-  bindNativeAd、showAd、pdf_ad_config_a、在某某页面展示广告、接入广告 时应用。
+  preload/bindNativeAd/showAd/Banner、开屏 UMP 后单次请求+Loading 结束读缓存展示（splash-loading）、
+  远程 JSON、MonetizationKit 双闸门、AdRequestLog/VModifyLog 排查。
+  当用户提到 AdMob、广告位、开屏、loading 开屏、preloadAd、bindNativeAd、showAd、接入广告 时应用。
 ---
 
 # AdMob 广告实现（可移植层）
@@ -33,6 +33,7 @@ description: >-
 | Debug 测试设备 | `AdBridge/.../utils/AdTestDeviceIdLog.kt` |
 | A 面默认 JSON | `app/src/main/assets/ad_remote_config_default_a.json` |
 
+- **开屏 Loading 策略（必读）**：[splash-loading.md](splash-loading.md)
 - **详解**：[reference.md](reference.md)
 - **产品对照**：[产品阅读.md](产品阅读.md)
 - **验收**：[checklist.md](checklist.md)
@@ -52,7 +53,7 @@ description: >-
 
 | 类型 | 典型场景 | 预加载 | 展示 | 注意 |
 |------|----------|--------|------|------|
-| **开屏 splash** | 启动页 | 可选 preload | `loadAd` → `show` → `destroy` | 唯一可现场 load 的全屏位 |
+| **开屏 splash** | 启动 Loading 页 | UMP 后 **`preloadAd` ×1**（见 [splash-loading.md](splash-loading.md)） | Loading 结束 **`obtainForShow` 有缓存才 show** | **禁止** Splash 内 `loadAd` await；无缓存跳页 |
 | **插屏 interstitial** | 跳转前、返回前 | **必须** `preloadAd` | `showAd`（**仅缓存**） | 无缓存不展示、不阻塞业务 |
 | **原生 native** | 页面底部/列表穿插 | **必须** `preloadAd` | `bindNativeAd` / `showNativeAd` | onDestroy 自动 destroy |
 | **Banner banner** | 主页底部可折叠 | **无** Loader 预加载 | `FloorziqAd.showBanner` 现场 load | PDF 用官方 collapsible 方案 |
@@ -81,14 +82,14 @@ MonetizationKit.enableFor(sense)
 
 | id | AdSense | 类型 | A/B | 预加载锚点 | 展示锚点 |
 |----|---------|------|-----|------------|----------|
-| 1 | LOADING_SPLASH | 开屏 | A/B | Splash preload + preloadAfterLoading | SplashLaunchPipeline load+show |
-| 2 | LANGUAGE_NATIVE | 原生 | 仅B | Language initView + preloadAfterLoading | Language onResume bindNativeAd |
-| 3 | LANGUAGE_INTERSTITIAL | 插屏 | 仅B | 同上 | 语言确认 showAd |
-| 4 | HOME_COLLAPSIBLE_BANNER | Banner | 仅B | 无（Main onResume 现场） | MainActivity onResume |
-| 5 | ENTER_INTERSTITIAL | 插屏 | A/B | preloadAfterLoading + navigate 旁路 | navigateWithEnterAd |
+| 1 | LOADING_SPLASH | 开屏 | A/B | **UMP 后** Splash 内 `preloadAd` ×1（Coordinator **不含**开屏） | Loading 放行后 `obtainForShow` → show 或跳页 |
+| 2 | LANGUAGE_NATIVE | 原生 | 仅B | UMP 后/后台/Language initView；B commit 补货 | Language onResume bind |
+| 3 | LANGUAGE_INTERSTITIAL | 插屏 | 仅B | 同上 + 确认前 ensure | 语言确认 showAd |
+| 4 | HOME_COLLAPSIBLE_BANNER | Banner | 仅B | 无（Main 容器就绪现场 load） | MainActivity Banner |
+| 5 | ENTER_INTERSTITIAL | 插屏 | A/B | UMP 后/后台 preload | navigateWithEnterAd |
 | 6 | BACK_INTERSTITIAL | 插屏 | A/B | 同上 | finishWithBackAd |
 | 7 | BOTTOM_NAV_INTERSTITIAL | 插屏 | 仅B | preloadOnMainEntry | Main 底栏 showAd |
-| 8 | SHARED_LARGE_NATIVE | 大原生 | 仅B | preloadOnMainEntry + 各页 onResume | bindNativeAd 多页 |
+| 8 | SHARED_LARGE_NATIVE | 大原生 | 仅B | preloadOnMainEntry + 各页 preload | bindNativeAd 多页 |
 
 videodownload 10 位（含热启开屏 4、搜索/引导等）见 [reference.md](reference.md) 对照表。
 
@@ -207,9 +208,10 @@ AI 对每个位置：
 
 ## 关键约定
 
-1. 插屏/原生：**先 preload，展示只 take 缓存**
-2. 开屏：启动页 `loadAd(10s)` → 持有引用 → `show` → `destroy`
-3. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例
-4. 注释简体中文；`scene` 参数写清业务时机便于 Logcat
-5. 订阅用户 `MonetizationKit.isSubs=true` 全局不展示
-6. VPN/代理可能导致 SSL `CertPathValidatorException`，广告与 FC 均失败 — 关 VPN 再验
+1. **开屏（见 [splash-loading.md](splash-loading.md)）**：UMP 后 `preloadAd` **一次** → Loading 放行闸（≥2s，缓存就绪或 UMP+10s）→ `obtainForShow` 有缓存才 show
+2. 插屏/原生：**先 preload，展示只 take 缓存**
+3. **禁止** Splash 协程内 `loadAd(开屏)`、`preloadAdAwait` 链、`AdPreloadCoordinator` 里再 preload 开屏
+4. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例
+5. 注释简体中文；`scene` 写清业务时机便于 Logcat
+6. 订阅用户 `MonetizationKit.isSubs=true` 全局不展示
+7. VPN/代理可能导致 SSL 异常 — 关 VPN 再验

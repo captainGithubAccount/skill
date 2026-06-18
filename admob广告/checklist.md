@@ -45,10 +45,22 @@
 
 - [ ] 展示前检查 `canShowAd(sense)` 或 `MonetizationKit.enableFor(sense)`
 - [ ] 插屏展示点未误用 `loadAd`（应 `showAd` 消费缓存）
-- [ ] 开屏 `destroy()` 已调用
-- [ ] Banner Tab 切换不重复 load（复用实例或 forceReload 语义清晰）
+- [ ] Banner Tab 切换不重复 load
 - [ ] 新增注释为简体中文
-- [ ] 无 BuildConfig 私加 ad_id 兜底
+
+## 开屏 Loading（必读 [splash-loading.md](splash-loading.md)）
+
+- [ ] UMP 后 **仅 1 次** `preloadAd(LOADING_SPLASH)`，在 `SplashLaunchPipeline`（或等价）
+- [ ] Splash 协程 **无** `loadAd(开屏)`、**无** `preloadAdAwait`、**无** `await preloadAfterLoading`
+- [ ] `AdPreloadCoordinator` **不含** `LOADING_SPLASH` preload
+- [ ] Loading 放行：≥2s 动画 +（`isReady` 或 UMP 后 10s）
+- [ ] 展示用 `SplashAdLoader.obtainForShow`；无缓存直接跳页
+- [ ] Logcat：`开屏单次请求开始`；不应有 `Loading开屏` 的 loadAd 日志
+
+```bash
+rg "loadAd\(|preloadAdAwait" app/**/splash/
+rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt  # 应无匹配
+```
 
 ## 验收（用户真机）
 

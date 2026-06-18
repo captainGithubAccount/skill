@@ -1,0 +1,98 @@
+// AdPreloadCoordinator 模板 — 开屏请求在 SplashLaunchPipeline，本类不含 LOADING_SPLASH
+// 详见 ../splash-loading.md
+
+object AdPreloadCoordinator {
+
+    private const val TAG = "AdPreload"
+    private val afterLoadingPreloadScheduled = AtomicBoolean(false)
+
+    /** UMP 后：语言/enter/back；不含开屏（开屏由 Splash 单次 preloadAd） */
+    fun preloadAfterUmpConsent(activity: FragmentActivity, languageConfigured: Boolean) {
+        if (!MonetizationKit.isInit) return
+        val scene = "UMP后预加载"
+        if (!languageConfigured) {
+            activity.preloadAd(AdSense.LANGUAGE_INTERSTITIAL, "$scene-语言插屏")
+            activity.preloadAd(AdSense.LANGUAGE_NATIVE, "$scene-语言原生")
+        }
+        activity.preloadAd(AdSense.ENTER_INTERSTITIAL, "$scene-enter")
+        activity.preloadAd(AdSense.BACK_INTERSTITIAL, "$scene-back")
+        // 禁止：activity.preloadAd(LOADING_SPLASH, …)
+    }
+
+    fun schedulePreloadAfterLoadingWhenReady(
+        preferredHost: FragmentActivity?,
+        languageConfigured: Boolean,
+        guideCompleted: Boolean,
+    ) {
+        // applicationScope + awaitBootstrapAndSdkReady(30s) 后再 runPreloadAfterLoading
+        // 见 PDF 金样 AdPreloadCoordinator.kt
+    }
+
+    fun schedulePreloadAfterRemoteConfigRefresh() {
+        // FC 刷新 pdf_ad_config_b 后补 B 面 preload（不受 Loading 去重限制）
+    }
+
+    /** @deprecated 请用 schedulePreloadAfterLoadingWhenReady */
+    fun schedulePreloadAfterLoadingInBackground(
+        preferredHost: FragmentActivity?,
+        languageConfigured: Boolean,
+        guideCompleted: Boolean,
+    ) {
+        if (!afterLoadingPreloadScheduled.compareAndSet(false, true)) return
+        MyApplication.applicationScope.launch(Dispatchers.Main) {
+            val host = resolveHost(preferredHost) ?: run {
+                afterLoadingPreloadScheduled.set(false)
+                return@launch
+            }
+            runPreloadAfterLoading(host, languageConfigured, guideCompleted)
+        }
+    }
+
+    /** B 面 commit 后补语言漏斗（不受 Loading 去重限制） */
+    fun preloadLanguageFunnelAfterModeBCommit(preferredHost: FragmentActivity?) {
+        if (!PdfAppAdsBootstrap.currentIsModeB()) return
+        if (readLanguageConfigured()) return
+        MyApplication.applicationScope.launch(Dispatchers.Main) {
+            val host = resolveHost(preferredHost) ?: return@launch
+            if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
+                host.preloadAd(AdSense.LANGUAGE_NATIVE, "B面commit-语言原生")
+            }
+            if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
+                host.preloadAd(AdSense.LANGUAGE_INTERSTITIAL, "B面commit-语言插屏")
+            }
+        }
+    }
+
+    /** 后台协程内 preloadAdAwait；禁止含 LOADING_SPLASH */
+    private suspend fun runPreloadAfterLoading(
+        activity: FragmentActivity,
+        languageConfigured: Boolean,
+        guideCompleted: Boolean,
+    ) {
+        withContext(Dispatchers.Main) {
+            if (PdfAppAdsBootstrap.canShowAd(AdSense.ENTER_INTERSTITIAL)) {
+                activity.preloadAdAwait(AdSense.ENTER_INTERSTITIAL, "Loading后-enter")
+            }
+            if (PdfAppAdsBootstrap.canShowAd(AdSense.BACK_INTERSTITIAL)) {
+                activity.preloadAdAwait(AdSense.BACK_INTERSTITIAL, "Loading后-back")
+            }
+            if (!languageConfigured && PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
+                activity.preloadAdAwait(AdSense.LANGUAGE_NATIVE, "Loading后-语言原生")
+                activity.preloadAdAwait(AdSense.LANGUAGE_INTERSTITIAL, "Loading后-语言插屏")
+            }
+        }
+    }
+
+    suspend fun preloadOnMainEntry(activity: FragmentActivity) {
+        listOf(
+            AdSense.ENTER_INTERSTITIAL,
+            AdSense.BACK_INTERSTITIAL,
+            AdSense.BOTTOM_NAV_INTERSTITIAL,
+            AdSense.SHARED_LARGE_NATIVE,
+        ).forEach { sense ->
+            if (PdfAppAdsBootstrap.canShowAd(sense)) {
+                activity.preloadAdAwait(sense, "进入主页-$sense")
+            }
+        }
+    }
+}
