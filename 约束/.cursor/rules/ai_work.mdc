@@ -37,6 +37,7 @@ alwaysApply: true
 4. **§3 小步交付**：每轮默认 ≤2 文件；预计 >3 文件或 >100 行须**先报备**并等用户同意。
 5. **路径与 Git**：改代码前须复述 workspace 根路径 + 拟改文件绝对路径；须执行 `git status`/`git diff`，有 WIP 须说明合并策略，**未经确认不覆盖**。
 6. **三方初始化**：凡接入/调用三方 SDK（不限埋点），须完成 **§12 初始化链检查**；**禁止**只写业务调用不写 Application 级 init，**禁止**「有日志/无崩溃 = 已初始化」。
+7. **local.properties 自动补全**：凡接入需配置 key 的能力，须完成 **§13 配置写入**；**禁止**只改 Gradle/代码不写 `local.properties`；**默认空值**，空值时 **跳过 init 等业务调用**。
 
 ## 0.4 需求理解先行（**强制，第一门禁**）
 
@@ -186,6 +187,7 @@ flowchart TD
 | §9 代码名词双语 | [x] | 方案中含代码名须附中文含义 |
 | §10 埋点接入 | [ ]/[x] | 查重复上报 + 上报时打印事件名与参数 |
 | §12 三方初始化 | [ ]/[x] | 列出 init 链 + isReady + 验收，防遗漏 Application 初始化 |
+| §13 local.properties | [ ]/[x] | 自动补全所需 key（默认空值）；空值跳过 init |
 | `code-term-bilingual` | [x] | 准确表述，禁止误导性「必定/总是」 |
 | 其它已 @ 规则 | [ ]/[x] | 如 `cursor-feature-interpret` 等 |
 
@@ -371,6 +373,7 @@ flowchart TD
 3. **关键逻辑位置**：入口、分支判断处、错误提示处（类名/方法名即可，不必贴全文）
 4. **已覆盖 / 未覆盖**的边界情况（及原因）
 5. **验证步骤**（≤5 条，可手工执行）
+6. **接入/三方类任务**须附 **§13.5 local.properties 对照表**；**§12 三方类**另须附 §12.4 验收项
 
 补充要求：
 
@@ -386,6 +389,7 @@ flowchart TD
 - **跳过 §0.5**：未贴约束自检、未获用户确认就出方案或写代码
 - **跳过 §11**：未复述路径、未执行 git status/diff、或有 WIP 未说明合并策略就改文件
 - **跳过 §12**：接入/调用三方 SDK 未输出初始化链与就绪检查、未获确认就改代码；**禁止**「能编译/有 Log = 已 init」
+- **跳过 §13**：只改 Gradle/`buildConfigField`/读取逻辑，未在根目录 `local.properties` 补全所需 key；或对空值 key 仍执行 init/业务调用
 - **路径不一致仍改代码**：workspace 根路径或拟改文件路径与用户指定不一致时未停止询问
 - **流程图缺标签**：任务节点未标注 `(新增)/(修改)/(删除)`
 - 不假设 happy path 即完成
@@ -692,7 +696,7 @@ rg "object KiteAnalytics|fun String\.emit" --glob "*.kt"
 1. **单点 init**：同一能力全工程 **唯一** init 链；禁止 Module A `wire`、Module B 裸调 SDK 却无 init。
 2. **顺序写清**：如 `FirebaseApp.initializeApp` → `KiteAnalytics.wire` → 任意 `emit` / `fetch`。
 3. **就绪 API**：优先复用现有 `isReady` / `isInitialized`；**若无则接入时须新增**（含失败 `Log.e`），禁止 silent no-op。
-4. **配置缺失**：token / appId 未配置时须 **显式 warn + 跳过**，并在方案中说明 Release 配置来源（如 `local.properties`）。
+4. **配置缺失与空值**：token / appId 等须先按 **§13** 写入 `local.properties`（用户未提供时 **默认空值** `key=`）；**值为空时禁止 init 及后续业务调用**，须显式 warn + 跳过；非空值来源说明见 §13.4。
 5. **门面 delegate**：App 层只允许转发到模块内唯一实现（参见 §10.5 反例 B）。
 
 #### 12.2.1 检索命令（须实际执行或等价搜索）
@@ -716,7 +720,7 @@ rg "object \w+Kit|object \w+Bridge|FirebaseAnalytics\.getInstance" --glob "*.kt"
 
 ### 12.4 验收清单（交付必附）
 
-- [ ] 冷启 Logcat / 文档约定 Tag 可见 **init 成功**（无「跳过 init / token 未配置」除非 Release 故意不配）
+- [ ] 冷启 Logcat / 文档约定 Tag 可见 **init 成功**（key 为空时须见「跳过 init / 配置为空」类 warn，**不得**对空值仍 init）
 - [ ] 就绪 API 为 **true** 后再触发业务动作
 - [ ] 业务动作达到**预期三方侧效果**（GA4 事件、广告 load、referrer 写入等），**不能**仅用「没崩溃」代替
 - [ ] 未 init 路径有 **Log.e 或等价明确失败**，非静默吞掉
@@ -727,11 +731,114 @@ rg "object \w+Kit|object \w+Bridge|FirebaseAnalytics\.getInstance" --glob "*.kt"
 - **禁止**只加 `XxxManager.doSomething()` 不在 `Application`（或文档指定单点）补 `Xxx.init`
 - **禁止**两套封装各 init 一次或各 **不** init 一次（双门面遗漏）
 - **禁止**「Logcat 有业务日志 = SDK 已工作」（须区分 init 成功 vs skipped）
-- **禁止**未配置 key 时在 Release 静默失败且无文档说明
+- **禁止** key 为空仍调用 init / 业务接口（须与 §13 空值跳过一致）
+- **禁止**未写入 `local.properties` 却在代码中读取配置（须 §13 先补 key）
 - **禁止**跳过 §12.2 表直接改代码
 
 ### 12.6 与其它章节的关系
 
-- 与 §0.4 / §0.5 / §11：三方接入仍须理解确认 → 约束自检（§0.5.3 勾选 §12）→ §11 → 再代码
+- 与 §0.4 / §0.5 / §11：三方接入仍须理解确认 → 约束自检（§0.5.3 勾选 §12、§13）→ §11 → 再代码
 - 与 §10：Telemetry 是 §12 子集；§10.2 查重 + §10.8 入口清点 **叠加** §12.2，不互相替代
-- 与 §6 交付：三方任务验收清单须含 §12.4，**不能**只贴 §6 通用项
+- 与 §13：**先 §13 补全 key → 再 §12 init 链**；key 为空则 init 链标「跳过」，不得假设后续会配
+- 与 §6 交付：三方任务验收清单须含 §12.4 + §13.5，**不能**只贴 §6 通用项
+
+## 13. local.properties 配置门禁（**强制，防遗漏 key**）
+
+凡接入/集成需从 `local.properties` 读取 key、token、appId 等配置的能力时，须防止「Gradle/代码已改、`local.properties` 未补 key」类遗漏。与 §12 **串联**：**先 §13 补 key，再 §12 写 init**；key **为空则跳过 init 及依赖该 key 的业务调用**。
+
+### 13.0 规则标识（配置类接入任务必显）
+
+命中 §13.1 时，回复须写明（可与 §0 标识同条）：
+
+> 📌 已基于约束 §13 完成 local.properties 配置检查
+
+未完成 §13.2 清单、未实际写入/补全 `local.properties` 前：**禁止**写 Gradle 读取逻辑或声称「已接入完成」。
+
+### 13.1 触发范围
+
+命中以下**任一**即适用本节：
+
+- 新增/修改 `build.gradle(.kts)` 中 `localProperties.getProperty("…")`、`buildConfigField` 从 properties 注入
+- 接入 SDK/广告/埋点/归因等文档要求 `local.properties` 配置项（如 `appsflyer.dev.key`、`ad.app.id`、`FB_APP_ID`）
+- 用户或 skill 明确列出须写入 `local.properties` 的 key
+- §12.2 初始化链表中「前置依赖」含 `local.properties` 项
+
+**不适用**：纯读代码解释、与本地配置无关的 UI/业务——仍显示 §0 标识，可跳过 §13 检查块。
+
+### 13.2 写代码前必做：配置 key 清单（强制）
+
+在方案或改文件**之前**，对**每一个**将新增的 properties key，输出下表（不得省略行）：
+
+| key | 中文含义 | Gradle/代码引用位置 | 当前 local.properties 状态 | 本轮写入策略 |
+|-----|----------|---------------------|---------------------------|--------------|
+| 例：`appsflyer.dev.key` | AppsFlyer 开发者密钥 | `Event/build.gradle.kts` → `BuildConfig` | 不存在 / 已有非空 / 已有空值 | 追加空值 / 不覆盖 / 用户已提供则写入 |
+
+**检索命令**（须实际执行或等价搜索）：
+
+```bash
+# 工程根目录
+rg "localProperties|getProperty\(|local\.properties" --glob "*.{gradle,kts}"
+rg "buildConfigField" --glob "*.{gradle,kts}"
+```
+
+若根目录无 `local.properties`，须在表中注明「将新建」。
+
+### 13.3 自动写入规则（**核心，写代码时必执行**）
+
+接入实现阶段，在改 Gradle/初始化代码**同时或之前**，须对工程**根目录** `local.properties` 执行：
+
+1. **文件不存在** → 创建根目录 `local.properties`（仅含本轮所需 key，带 `# 中文用途` 注释）。
+2. **key 不存在** → **追加**一行；用户未提供真实值时写 **空值**：`key=`（**禁止**占位符如 `YOUR_XXX_HERE`）。
+3. **key 已存在且值非空** → **禁止覆盖**；须在方案/交付中说明沿用的现有值（不打印密钥明文）。
+4. **key 已存在且值为空** → 保持空值；用户本轮提供了真实值且明确同意写入时，才可更新为非空。
+5. **用户已提供真实值** → 直接写入对应 key（仍 **禁止**提交到 VCS，见 §7）。
+6. **禁止**把密钥写入 `gradle.properties`、源码常量、或其它可提交文件。
+
+**写入示例**（用户未提供值时）：
+
+```properties
+# AppsFlyer 开发者密钥（空值时不 init）
+appsflyer.dev.key=
+# AppsFlyer 应用 ID（空值时不 init）
+appsflyer.app.id=
+```
+
+### 13.4 空值与初始化联动（与 §12 一致）
+
+| 配置状态 | init / 业务行为 | Log 要求 |
+|----------|----------------|----------|
+| key **不存在**（写入前） | 不得声称接入完成；须先 §13.3 补 key | — |
+| key 存在，**值为空** | **跳过** `Xxx.init()` 及依赖该 key 的上报、广告 load 等调用 | `Log.w` / `Log.e` 标明 key 名 +「配置为空，跳过 init」 |
+| key 存在，**值非空** | 按 §12 执行 init 链 | init 成功/失败按 §12.4 |
+
+**代码侧硬性要求**：
+
+1. 读取 `BuildConfig` 或 properties 注入字段后，须 **`isNullOrBlank()` 判断**；空则 **return**，不得调用 SDK API。
+2. init 入口（如 `Application.onCreate`）可保留调用，但 **init 实现内部**须因空配置 early return（避免无 key 仍向三方注册）。
+3. 改 `local.properties` 后须提醒用户 **Rebuild** 以使 `BuildConfig` 生效。
+
+### 13.5 交付必附：local.properties 对照表
+
+```markdown
+## ✅ local.properties 配置对照（§13）
+
+| key | 中文含义 | 操作 | 当前值状态 | init 是否执行 |
+|-----|----------|------|-----------|--------------|
+| `appsflyer.dev.key` | AppsFlyer 开发者密钥 | 追加 / 沿用 / 用户填入 | 空 / 已配置 | 空→跳过 / 非空→已 init |
+
+**提醒**：`local.properties` 勿提交 VCS；填值后请 Rebuild。
+```
+
+### 13.6 禁止事项（配置专用）
+
+- **禁止**只写 `getProperty` / `buildConfigField` 不补 `local.properties`
+- **禁止**使用占位符字符串代替空值（空值即 `key=`）
+- **禁止** key 为空仍执行 init、上报、广告请求等依赖配置的操作
+- **禁止**未经用户同意覆盖 `local.properties` 中**已有非空**值
+- **禁止**跳过 §13.2 清单直接改代码
+
+### 13.7 与其它章节的关系
+
+- 与 §0.5 / §11：配置类接入仍须约束自检（勾选 §13）→ §11 → 再改文件
+- 与 §12：**§13 先于 §12**；§12.2 表中「未 init 时业务行为」须与空值跳过一致
+- 与 §6 / §7：交付含 §13.5；跳过 §13、空值仍 init 属 §7 禁止项
