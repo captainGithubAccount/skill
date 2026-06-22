@@ -20,7 +20,7 @@ sequenceDiagram
     S->>UMP: awaitConsent（冷启必须）
     UMP-->>S: isUmpResolved=true
     S->>C: preloadAfterUmpConsent（不含开屏）
-    S->>L: preloadAd LOADING_SPLASH ×1
+    S->>MK: runWhenSdkInitializedOnce → preloadAd LOADING_SPLASH ×1
     S->>C: schedulePreloadAfterLoadingInBackground
     C->>BG: enter/back/语言… preloadAdAwait
     loop 放行闸 MIN_ANIM 2s 且 缓存就绪或 UMP+10s
@@ -41,7 +41,7 @@ sequenceDiagram
 
 | 步骤 | 做什么 | 禁止 |
 |------|--------|------|
-| **① UMP 后请求** | `activity.preloadAd(LOADING_SPLASH, "UMP后开屏单次请求")` 一次 | 同会话再 `loadAd` / 再 preload 开屏 / `preloadAdAwait` 开屏 |
+| **① UMP 后请求** | `runWhenSdkInitializedOnce { preloadAd(LOADING_SPLASH) }` 一次 | 同会话再 `loadAd` / 再 preload 开屏 / UMP 后立即 preload（init 未就绪） |
 | **② 等 Loading 结束** | ≥2s 动画；缓存就绪可提前放行；UMP 后最长等 10s | Splash 协程 await 其它位 preload 链 |
 | **③ 展示** | `SplashAdLoader.obtainForShow()` 有货才 show | 无缓存现场 `loadAd`；无货仍阻塞用户 |
 
@@ -76,7 +76,7 @@ sequenceDiagram
 |------|-----------|------|
 | `preloadAfterUmpConsent` | ❌ **不含** | 语言/enter/back；fire-and-forget |
 | `schedulePreloadAfterLoadingInBackground` | ❌ **不含** | 后台 `preloadAdAwait` 其它位 |
-| `SplashLaunchPipeline.requestSplashOnceAfterUmp` | ✅ **唯一** | 开屏单次请求 |
+| `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` | ✅ **唯一** | 开屏单次请求（经 SDK 一次性回调） |
 
 ---
 
@@ -95,6 +95,8 @@ videodownload 仍用 `preloadAd + loadAd await`；**新接入按 PDF 金样**，
 ---
 
 ## 7. 接入审查（必跑）
+
+**AI 接入前**：先完成 [SKILL.md §开屏调用点清点门禁](SKILL.md#开屏调用点清点门禁接入前强制--须用户确认)，用户「确认调用点」后再改代码。
 
 ```bash
 # Splash 内不应出现 loadAd / preloadAdAwait / await preloadAfterLoading
@@ -118,42 +120,25 @@ rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt
 ## 8. 关联文件
 
 - [SKILL.md](SKILL.md) — 总览
+- [sdk-init-callback.md](sdk-init-callback.md) — SDK 就绪一次性回调（接入必读）
 - [templates/splash-snippet.kt.template](templates/splash-snippet.kt.template) — 管线片段
 - [checklist.md](checklist.md) — 开屏验收勾选项
 - [reference.md](reference.md) — API 详解
 
 ---
 
-## 9. SDK init 竞态与可选修复
+## 9. SDK init 竞态与补发（PDF 2026-06）
 
-**现象**：`first_open` 人数显著高于开屏 `ad_request` 触发人数（例如 166 vs 65）。
+**现象**：`first_open` 人数显著高于开屏 `ad_request` 触发人数。
 
-**根因（与 initialize 次数无关）**：
+**根因**：UMP 结束与 `Application` 异步 `MonetizationKit.init` 并行；UMP 后立即 preload 时 `isInit` 可能仍为 false → 闸门失败且本进程不补发。
 
-1. `Application` IO 协程异步执行 `MonetizationKit.init` → 回调才 `isInit=true`
-2. UMP 快路径结束 → `requestSplashOnceAfterUmp()` **只试一次**
-3. 若此时 `MonetizationKit.isInit==false`，`canShowAd(LOADING_SPLASH)` 因「SDK未init」失败 → **本进程不再补发开屏**
-
-**方案 A（已落地）**：全进程单点 `MobileAds.initialize`，避免多次 init 回调干扰；**不保证**消除上述竞态。
-
-**方案 C（可选 · videodownload 金样）**：UMP 通过后、`preloadAd` 前增加短等待：
-
-```kotlin
-// StartActivity 等价：最多等 2500ms 直至 isInit
-private suspend fun awaitSdkInitIfNeeded() {
-    if (MonetizationKit.isInit) return
-    withTimeoutOrNull(2500L) {
-        while (!MonetizationKit.isInit) delay(50)
-    }
-}
-```
-
-接入前与产品确认：是否接受 Splash 最多 +2.5s 以换开屏触发率。
+详见 [sdk-init-callback.md](sdk-init-callback.md) 与下方摘要。
 
 **Logcat 对照**：
 
 | 日志 | 含义 |
 |------|------|
-| `【广告位判定】→ 不可用 \| 原因=SDK未init` | UMP 后开屏被跳过（竞态） |
-| `开屏单次请求开始` | 闸门通过且已 preload |
-| `【SDK初始化】AdMob MobileAds.initialize 完成` | 通常晚于或早于 UMP，取决于设备与 IO 调度 |
+| `开屏单次请求开始` | SDK 已 init 且闸门通过 |
+| `开屏单次请求跳过：闸门未过` | init 后仍 AB/RC/订阅等失败 |
+| `【SDK初始化】AdMob MobileAds.initialize 完成` | 通常早于或晚于 UMP，监听保证晚到也会 preload |

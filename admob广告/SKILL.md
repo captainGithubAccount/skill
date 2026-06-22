@@ -2,8 +2,8 @@
 name: admob-ad-monetization
 description: >-
   Android AdMob 广告层可移植接入：AdBridge/admob/AdBase 模块、AdSense 广告位、
-  preload/bindNativeAd/showAd/Banner、开屏 UMP 后单次请求+Loading 结束读缓存展示（splash-loading）、
-  远程 JSON、MonetizationKit 双闸门、AdRequestLog/VModifyLog 排查。
+  preload/bindNativeAd/showAd/Banner、开屏 UMP+SDK一次性回调后单次 preload（sdk-init-callback/splash-loading）、
+  远程 JSON、MonetizationKit 双闸门、开屏 load/preload 多入口须用户确认调用点后才能接入。
   当用户提到 AdMob、广告位、开屏、loading 开屏、preloadAd、bindNativeAd、showAd、接入广告 时应用。
 ---
 
@@ -22,7 +22,7 @@ description: >-
 |------|------|
 | AdSense 枚举 | `AdBridge/.../entity/AdSense.kt` |
 | 对外 API | `AdBridge/.../ext/ActivityAdExt.kt`、`FragmentAdExt.kt` |
-| 运行时闸门 | `AdBridge/.../MonetizationKit.kt` |
+| `MonetizationKit` | 运行时闸门、`init` / `runWhenSdkInitializedOnce` |
 | 远程 JSON 桥 | `AdBridge/.../config/AdRemoteConfigBridge.kt` |
 | 请求链路日志 | `AdBridge/.../utils/AdRequestLog.kt` |
 | AB/RC 编排 | `app/.../bootstrap/PdfAppAdsBootstrap.kt` |
@@ -33,6 +33,7 @@ description: >-
 | Debug 测试设备 | `AdBridge/.../utils/AdTestDeviceIdLog.kt` |
 | A 面默认 JSON | `app/src/main/assets/ad_remote_config_default_a.json` |
 
+- **SDK 就绪回调 + 请求时机（必读）**：[sdk-init-callback.md](sdk-init-callback.md)
 - **开屏 Loading 策略（必读）**：[splash-loading.md](splash-loading.md)
 - **详解**：[reference.md](reference.md)
 - **产品对照**：[产品阅读.md](产品阅读.md)
@@ -53,7 +54,7 @@ description: >-
 
 | 类型 | 典型场景 | 预加载 | 展示 | 注意 |
 |------|----------|--------|------|------|
-| **开屏 splash** | 启动 Loading 页 | UMP 后 **`preloadAd` ×1**（见 [splash-loading.md](splash-loading.md)） | Loading 结束 **`obtainForShow` 有缓存才 show** | **禁止** Splash 内 `loadAd` await；无缓存跳页 |
+| **开屏 splash** | 启动 Loading 页 | UMP 后 **`runWhenSdkInitializedOnce` → preloadAd ×1**（见 [sdk-init-callback.md](sdk-init-callback.md)） | Loading 放行后 **`obtainForShow` 有缓存才 show** | **禁止** UMP 后立即 preload；禁止 Splash 内 `MonetizationKit.init` |
 | **插屏 interstitial** | 跳转前、返回前 | **必须** `preloadAd` | `showAd`（**仅缓存**） | 无缓存不展示、不阻塞业务 |
 | **原生 native** | 页面底部/列表穿插 | **必须** `preloadAd` | `bindNativeAd` / `showNativeAd` | onDestroy 自动 destroy |
 | **Banner banner** | 主页底部可折叠 | **无** Loader 预加载 | `FloorziqAd.showBanner` 现场 load | PDF 用官方 collapsible 方案 |
@@ -82,7 +83,7 @@ MonetizationKit.enableFor(sense)
 
 | id | AdSense | 类型 | A/B | 预加载锚点 | 展示锚点 |
 |----|---------|------|-----|------------|----------|
-| 1 | LOADING_SPLASH | 开屏 | A/B | **UMP 后** Splash 内 `preloadAd` ×1（Coordinator **不含**开屏） | Loading 放行后 `obtainForShow` → show 或跳页 |
+| 1 | LOADING_SPLASH | 开屏 | A/B | UMP 后 `runWhenSdkInitializedOnce` → preload ×1（Coordinator **不含**开屏） | Loading 放行后 `obtainForShow` → show 或跳页 |
 | 2 | LANGUAGE_NATIVE | 原生 | 仅B | UMP 后/后台/Language initView；B commit 补货 | Language onResume bind |
 | 3 | LANGUAGE_INTERSTITIAL | 插屏 | 仅B | 同上 + 确认前 ensure | 语言确认 showAd |
 | 4 | HOME_COLLAPSIBLE_BANNER | Banner | 仅B | 无（Main 容器就绪现场 load） | MainActivity Banner |
@@ -102,6 +103,63 @@ videodownload 10 位（含热启开屏 4、搜索/引导等）见 [reference.md]
 | `AdRemoteConfigBridge` | JSON 是否已 apply；B 面需远程 `pdf_ad_config_b` |
 | `PdfAppAdsBootstrap.canShowAd` | 是否叠 AB 面门控 |
 | UMP / 开屏 | 冷启开屏见 [ump接入](../ump接入/SKILL.md) |
+
+## 开屏调用点清点门禁（接入前强制 · 须用户确认）
+
+凡按本 Skill **接入 / 修改开屏**（`LOADING_SPLASH`、`HOT_LOADING_SPLASH` 或等价 `ad_sense=1/4`），AI **必须先清点工程中所有 load / preload / 现场请求入口**，**列出表格给用户确认**，用户明确同意调用点方案后，**才允许**改代码、复制模板、写 Coordinator。
+
+### 必须检索（实际执行或等价搜索）
+
+```bash
+# 开屏 preload / load / await
+rg "LOADING_SPLASH|HOT_LOADING_SPLASH" --glob "*.kt"
+rg "preloadAd\(|preloadAdAwait\(|loadAd\(" --glob "*.kt" -g "*splash*"
+rg "preloadAd\(|preloadAdAwait\(|loadAd\(" --glob "*.kt" | rg -i "splash|loading_splash|开屏"
+
+# 展示（不应再发网络请求，但须列入清单）
+rg "obtainForShow|SplashAdLoader\.|FloorziqAd\.(preloadSplash|loadSplash|showSplash)" --glob "*.kt"
+
+# 补货 / Coordinator 是否误含开屏
+rg "LOADING_SPLASH" app/**/ads/
+```
+
+### 必须输出的「开屏调用点清单」（模板）
+
+**未获用户确认前：禁止写代码。**
+
+```markdown
+## 开屏 load/preload 调用点清点（请确认）
+
+| # | 文件:行 | 函数/触发时机 | 调用 API | 类型 | 金样是否保留 | 说明 |
+|---|---------|---------------|----------|------|--------------|------|
+| 1 | `…/SplashLaunchPipeline.kt:…` | UMP 后 `runWhenSdkInitializedOnce` | `preloadAd(LOADING_SPLASH)` | **preload** | ✅ 唯一网络 preload | … |
+| 2 | `…/SplashLaunchPipeline.kt:…` | 放行闸后 | `obtainForShow` → `show` | **展示** | ✅ 只读缓存 | 非 load |
+| … | … | … | … | … | … | … |
+
+**统计**：preload 网络入口 **N** 处 · load 入口 **M** 处 · 展示 **K** 处
+
+**金样目标（PDF）**：冷启开屏 **preload 网络仅 1 处**（`scheduleSplashPreloadOnceWhenSdkReady`）；`AdPreloadCoordinator` **不含**开屏；Splash **无** `loadAd(开屏)`。
+
+**请你确认**：保留/删除/合并上表哪些行？回复「确认调用点」或指出要改的 # 号；**确认前我不改工程**。
+```
+
+### 判定规则（写入说明列）
+
+| 情况 | AI 须告知用户 |
+|------|----------------|
+| **preload / load 多于 1 处** | 逐条说明是否会 duplicate 请求、Loader 去重能否兜底、建议保留哪一处 |
+| **Coordinator 含 `LOADING_SPLASH`** | 标 ❌ 与金样冲突，建议移除或改为非开屏位 |
+| **Splash 内 `loadAd` / `preloadAdAwait` 开屏** | 标 ❌ 旧误接，建议改为 `runWhenSdkInitializedOnce` + `obtainForShow` |
+| **展示后 `AdReplenishCoordinator` 补货开屏** | 单独一行，scene 通常为展示消耗后；与 Loading 首次 preload **不是同一时机** |
+| **仅注释/常量/枚举引用** | 标「非调用」，不计入 preload 统计 |
+
+### 停止点
+
+1. 输出上表 + 统计 + 金样目标对比  
+2. **等待**用户「确认调用点」或修正意见  
+3. 用户确认后，再进入 Step 2.5 / 模板复制 / 代码修改  
+
+纯读代码解释、用户明确「先不要写代码」时可只输出清点表，同样须标注待确认项。
 
 ## 工作流 A：全新项目接入广告层
 
@@ -130,6 +188,14 @@ MonetizationKit.init(context) { /* isInit=true；全进程唯一 MobileAds.initi
 **SDK 单点初始化（方案 A · PDF 2026-06）**：全进程仅 `MonetizationKit.init` 内调用一次 `MobileAds.initialize`；`AdmobListenerImpl.init()` / `warmUpMobileAds` **不再** duplicate initialize。详见 [reference.md#sdk-单点初始化](reference.md#sdk-单点初始化)。
 
 见 [templates/Application-init-snippet.kt.template](templates/Application-init-snippet.kt.template)。
+
+### Step 2.5：Splash SDK 一次性回调（开屏必读）
+
+**前置**：已完成 [开屏调用点清点门禁](#开屏调用点清点门禁接入前强制--须用户确认) 且用户已「确认调用点」。
+
+UMP 结束后注册 `MonetizationKit.runWhenSdkInitializedOnce`，在 **首次 `isInit=true`** 且 `canShowAd` 通过时 preload 开屏 **一次**；**禁止** Splash 再调 `MonetizationKit.init`。
+
+详见 [sdk-init-callback.md](sdk-init-callback.md)、[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)。
 
 ### Step 3：默认广告 JSON + Firebase
 
@@ -181,7 +247,7 @@ AI 对每个位置：
 **VModifyLog 关键文案**：
 
 - `【广告位判定】→ 不可用 | 原因=远程JSON未开放该ad_sense` — A 面 JSON 无该位或 B 远程未拉到
-- `【广告位判定】→ 不可用 | 原因=SDK未init` — Application 未走完 `MonetizationKit.init` 回调，或 Splash 早于 isInit 判闸门（见 [splash-loading.md](splash-loading.md) await isInit）
+- `【广告位判定】→ 不可用 | 原因=SDK未init` — init 未完成；开屏应走 [runWhenSdkInitializedOnce](sdk-init-callback.md)，勿 UMP 后立即 preload
 - `【广告RC】远程key为空 | key=pdf_ad_config_b` — B 面 FC 失败，Banner 等 B 位不可用
 
 ## Debug 测试设备（与 UMP 区分）
@@ -198,6 +264,8 @@ AI 对每个位置：
 - 原生：[templates/native-snippet.kt.template](templates/native-snippet.kt.template)
 - 插屏：[templates/interstitial-snippet.kt.template](templates/interstitial-snippet.kt.template)
 - 开屏：[templates/splash-snippet.kt.template](templates/splash-snippet.kt.template)
+- SDK 回调：[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)
+- 开屏调用点清点（给用户确认）：[templates/splash-callsite-audit.md.template](templates/splash-callsite-audit.md.template)
 - Banner：[templates/banner-snippet.kt.template](templates/banner-snippet.kt.template)
 
 ## 与其它 Skill 关系
@@ -210,7 +278,8 @@ AI 对每个位置：
 
 ## 关键约定
 
-1. **开屏（见 [splash-loading.md](splash-loading.md)）**：UMP 后 `preloadAd` **一次** → Loading 放行闸（≥2s，缓存就绪或 UMP+10s）→ `obtainForShow` 有缓存才 show
+0. **开屏 load/preload 多入口**：接入前必须 [开屏调用点清点](#开屏调用点清点门禁接入前强制--须用户确认)，**用户确认调用点后**再改代码
+1. **开屏（见 [splash-loading.md](splash-loading.md) + [sdk-init-callback.md](sdk-init-callback.md)）**：UMP 后 `runWhenSdkInitializedOnce` → preload **一次** → Loading 放行闸 → `obtainForShow`
 2. 插屏/原生：**先 preload，展示只 take 缓存**
 3. **禁止** Splash 协程内 `loadAd(开屏)`、`preloadAdAwait` 链、`AdPreloadCoordinator` 里再 preload 开屏
 4. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例

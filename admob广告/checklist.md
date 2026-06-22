@@ -1,5 +1,12 @@
 # AdMob 广告层接入检查清单
 
+## AI 接入流程（开屏强制）
+
+- [ ] 已全工程检索开屏 `preloadAd` / `loadAd` / `LOADING_SPLASH` 调用点
+- [ ] 已向用户输出「开屏调用点清单」表（含 #、文件、API、preload/load/展示分类）
+- [ ] 用户已回复 **「确认调用点」** 或等价书面同意（未确认 **禁止** 写代码）
+- [ ] 确认后 preload 网络入口符合金样：**仅 1 处**（`scheduleSplashPreloadOnceWhenSdkReady`）
+
 ## 模块与 Gradle
 
 - [ ] `:AdBridge`、`:admob`、`:AdBase` 已加入工程
@@ -17,6 +24,7 @@
 - [ ] 冷启 Logcat 仅 1 条 `【SDK初始化】AdMob MobileAds.initialize 完成 isInit=true`
 - [ ] UMP 结束后 `isUmpResolved=true`（双闸门均 true 才请求）
 - [ ] Debug：`AdTestDeviceIdLog.applyDebugConfigurationBeforeInit` 在 **唯一** `MobileAds.initialize` 之前执行
+- [ ] 开屏：UMP 后使用 `runWhenSdkInitializedOnce`（见 [sdk-init-callback.md](sdk-init-callback.md)）
 - [ ] 冷启开屏已接 UMP（见 [ump接入](../ump接入/SKILL.md)）
 
 ## AB 面与远程配置（若接入）
@@ -50,9 +58,11 @@
 - [ ] Banner Tab 切换不重复 load
 - [ ] 新增注释为简体中文
 
-## 开屏 Loading（必读 [splash-loading.md](splash-loading.md)）
+## 开屏 Loading（必读 [splash-loading.md](splash-loading.md) + [sdk-init-callback.md](sdk-init-callback.md)）
 
-- [ ] UMP 后 **仅 1 次** `preloadAd(LOADING_SPLASH)`，在 `SplashLaunchPipeline`（或等价）
+- [ ] UMP 后 **仅 1 次** 开屏 preload：`runWhenSdkInitializedOnce` + `splashPreloadRequested` 防重
+- [ ] Splash **无** `MonetizationKit.init`；Application **仅一处** `MonetizationKit.init`
+- [ ] UMP 后 **无** 立即 `preloadAd(LOADING_SPLASH)`（旧 `requestSplashOnceAfterUmp` 写法）
 - [ ] Splash 协程 **无** `loadAd(开屏)`、**无** `preloadAdAwait`、**无** `await preloadAfterLoading`
 - [ ] `AdPreloadCoordinator` **不含** `LOADING_SPLASH` preload
 - [ ] Loading 放行：≥2s 动画 +（`isReady` 或 UMP 后 10s）
@@ -60,6 +70,8 @@
 - [ ] Logcat：`开屏单次请求开始`；不应有 `Loading开屏` 的 loadAd 日志
 
 ```bash
+rg "runWhenSdkInitializedOnce|scheduleSplashPreloadOnceWhenSdkReady" app/**/splash/
+rg "MonetizationKit\.init" app/**/splash/   # 应无匹配
 rg "loadAd\(|preloadAdAwait" app/**/splash/
 rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt  # 应无匹配
 ```

@@ -16,7 +16,9 @@
 
 | 函数 | 用途 |
 |------|------|
-| `preloadAd(sense, scene)` | 后台预加载（fire-and-forget）；**开屏 UMP 后唯一请求入口** |
+| `MonetizationKit.runWhenSdkInitializedOnce(block)` | **Splash/UMP 后**：首次 `isInit=true` 时执行 block 一次；已 init 则同步执行。详见 [sdk-init-callback.md](sdk-init-callback.md) |
+| `MonetizationKit.init(context) { }` | **仅 Application**：单点 `MobileAds.initialize`、置 `isInit` |
+| `preloadAd(sense, scene)` | 后台预加载（fire-and-forget）；**开屏**须在 SDK 回调后调用 |
 | `preloadAdAwait` | 协程内 await；**禁止** Splash 开屏路径；仅 Coordinator 后台 |
 | `SplashAdLoader.isReady(sense)` | 开屏放行闸：Loader/SDK 是否有货 |
 | `SplashAdLoader.obtainForShow(activity, sense, scene)` | 开屏展示：**只读缓存**，无货返回 null |
@@ -57,36 +59,34 @@ onDestroy → NativeAd.destroy()（扩展内已注册）
 
 ### 开屏（Loading 页 · PDF 金样）
 
-详见 **[splash-loading.md](splash-loading.md)**。
+详见 **[splash-loading.md](splash-loading.md)**、**[sdk-init-callback.md](sdk-init-callback.md)**。
 
 ```
-UMP 结束 → preloadAd(LOADING_SPLASH) ×1
+UMP 结束 → runWhenSdkInitializedOnce { preloadAd(LOADING_SPLASH) ×1 }
          → 其它位后台 preload（不含开屏）
          → 放行闸：≥2s 且 (isReady 或 UMP+10s)
          → obtainForShow：有缓存 show，无缓存跳页
 ```
 
 ```kotlin
-// SplashLaunchPipeline — templates/splash-snippet.kt.template
-private fun requestSplashOnceAfterUmp() {
+// templates/splash-snippet.kt.template + sdk-init-callback-snippet.kt.template
+private fun scheduleSplashPreloadOnceWhenSdkReady() {
+    MonetizationKit.runWhenSdkInitializedOnce {
+        requestSplashPreloadIfNeeded()
+    }
+}
+
+private fun requestSplashPreloadIfNeeded() {
+    if (splashPreloadRequested) return
     if (!canShowAd(LOADING_SPLASH)) return
+    splashPreloadRequested = true
     activity.preloadAd(LOADING_SPLASH, "UMP后开屏单次请求")
-}
-
-private fun tryPassReleaseGate(now: Long): Boolean {
-    if (now - startElapsed < MIN_ANIM_MS) return false
-    if (now >= adPhaseStartElapsed + MAX_AFTER_UMP_MS) return true
-    return SplashAdLoader.isReady(LOADING_SPLASH)
-}
-
-private suspend fun showSplashOrNavigate() {
-    val ad = SplashAdLoader.obtainForShow(activity, LOADING_SPLASH, "Loading开屏展示")
-    if (ad != null) ad.show(activity) { onNavigateNext() }
-    else onNavigateNext()
 }
 ```
 
 冷启须 `isInit && isUmpResolved`。曝光后补货走 `AdReplenishCoordinator`，不在 Loading 后再 `preloadAdAwait(开屏)`。
+
+**接入门禁**：开屏 preload/load 若工程内有多处，须先 [开屏调用点清点](SKILL.md#开屏调用点清点门禁接入前强制--须用户确认)，用户「确认调用点」后再改代码。
 
 ## SDK 单点初始化
 
@@ -115,13 +115,18 @@ Application IO 协程
 - Debug 另见 `【AdMob测试设备】MobileAds.initialize 回调完成`（在 init 回调内）
 - **不应**在 prepare/warmUp 阶段出现 initialize 完成日志
 
-**竞态提示**：`Application` 异步 `init` 与 UMP 快路径并行时，Splash 可能在 `isInit=false` 时判闸门 → 开屏 `ad_request` 漏发（与 `first_open` 人数差）。initialize 去重**不单独解决**该缺口；可选在 UMP 后 `await isInit`（videodownload `StartActivity.awaitSdkInitIfNeeded` 约 2.5s），见 [splash-loading.md §9](splash-loading.md#9-sdk-init-竞态与可选修复)。
+**竞态与补发**：UMP 与 Application 异步 init 并行 → 须 [runWhenSdkInitializedOnce](sdk-init-callback.md)，勿 UMP 后立即 preload。
 
 **禁止**：
 
 - `AdmobListenerImpl.init` 内再 `MobileAds.initialize`
-- `warmUpMobileAds` 内 duplicate initialize
+- Splash 内再调 `MonetizationKit.init`（与 Application 竞态）
+- UMP 后立即 `preloadAd(开屏)` 而不走 `runWhenSdkInitializedOnce`
 - 用 Logcat 有 `FloorziqAd.initAd` 字样代替 `isInit=true` 验收
+
+## SDK 就绪一次性回调
+
+开屏与 UMP∥init 竞态的**标准接入**：见 **[sdk-init-callback.md](sdk-init-callback.md)**（`runWhenSdkInitializedOnce`、注册时机、防重、`init { }` 与监听的差异）。
 
 ### Banner（PDF 主页）
 
