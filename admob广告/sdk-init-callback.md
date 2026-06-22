@@ -160,7 +160,7 @@ sequenceDiagram
 | 场景 | 建议 |
 |------|------|
 | **UMP 后 fire-and-forget 一批**（语言 + enter/back；开屏单次） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce` |
-| Loading 后 `runPreloadAfterLoading` | 已有 `awaitBootstrapAndSdkReady`；**仅 Splash 挂号一次** |
+| Loading 后 `runPreloadAfterLoading` | ❌ **已删除**（Loading 批）；见 [mode-b-page-gate.md](mode-b-page-gate.md) UMP vs Loading |
 | A→B / FC 刷新 | **禁止** Bootstrap 整批 preload；见 [mode-b-page-gate.md](mode-b-page-gate.md) |
 | 进主页 / 语言页后的 preload | 页面 initView / `bindModeBAdGateWhileVisible` |
 

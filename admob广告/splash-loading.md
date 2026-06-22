@@ -15,16 +15,12 @@ sequenceDiagram
     participant UMP as AdConsentManager
     participant C as AdPreloadCoordinator
     participant L as SplashAdLoader
-    participant BG as applicationScope
 
     S->>UMP: awaitConsent（冷启必须）
     UMP-->>S: isUmpResolved=true
-    S->>C: preloadAfterUmpConsent（不含开屏）
     S->>MK: runWhenSdkInitializedOnce
     MK->>C: preloadAfterUmpConsent（语言/enter/back）
     MK->>L: preloadAd LOADING_SPLASH ×1
-    S->>C: schedulePreloadAfterLoadingInBackground
-    C->>BG: enter/back/语言… preloadAdAwait
     loop 放行闸 MIN_ANIM 2s 且 缓存就绪或 UMP+10s
         S->>L: isReady?
     end
@@ -76,9 +72,11 @@ sequenceDiagram
 
 | 方法 | 是否含开屏 | 说明 |
 |------|-----------|------|
-| `preloadAfterUmpConsent` | ❌ **不含** | 语言/enter/back；fire-and-forget |
-| `schedulePreloadAfterLoadingInBackground` | ❌ **不含** | 后台 `preloadAdAwait` 其它位 |
-| `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` | ✅ **唯一** | 开屏单次请求（经 SDK 一次性回调） |
+| `preloadAfterUmpConsent` | ❌ **不含** | UMP 批：语言/enter/back；fire-and-forget |
+| ~~`schedulePreloadAfterLoadingWhenReady`~~ | — | ❌ **已删除**（Loading 批） |
+| `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` | ✅ **唯一开屏入口** | 开屏单次 preload（经 SDK 一次性回调） |
+
+其它 B 位：进主页 `preloadOnMainEntry`、各页 `bindModeBAdGateWhileVisible`、enter/back 路由与补货。
 
 ---
 
@@ -89,7 +87,7 @@ sequenceDiagram
 | UMP 后开屏 | `loadAd` await 10s | `preloadAd` ×1，不 await |
 | 展示 | `splashAd = loadAd` 返回值 | `obtainForShow` 只读缓存 |
 | 无缓存 | 有时仍等 load 超时 | 直接跳页 |
-| 后台预加载 | Splash 内 `await preloadAfterLoading` | `applicationScope` 并行 |
+| 后台预加载 | Splash 内 `await preloadAfterLoading` / Loading 批 | ❌ 已删；B 位由 UMP 批 + 进页分发 |
 | 开屏补货 | Loading 后 `preloadAdAwait(开屏)` | 去掉；曝光后走 `AdReplenishCoordinator` |
 
 videodownload 仍用 `preloadAd + loadAd await`；**新接入按 PDF 金样**，勿混 videodownload 开屏写法。
@@ -115,7 +113,7 @@ rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt
 1. `开屏单次请求开始`
 2. `【预加载开始】…UMP后开屏单次请求`（约 1 次 requestStart）
 3. 缓存就绪 → `开屏展示：命中本地缓存`；否则 → `开屏无本地缓存，跳过展示`
-4. **不应**出现 `Loading开屏` 的 `loadAd` 日志
+4. **不应**出现 `Loading冷热启动结束` / `Loading结束后台预加载已调度`
 
 ---
 

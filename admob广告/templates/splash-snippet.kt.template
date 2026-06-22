@@ -1,5 +1,6 @@
-// 开屏 — SplashLaunchPipeline（UMP 后 SDK 回调内：6a434ef4 同批 preload + 开屏）
-// 详见 ../splash-loading.md 与 ../sdk-init-callback.md
+// 开屏 — SplashLaunchPipeline（UMP 后 SDK 回调内：UMP 批 + 开屏单次 preload）
+// ❌ 禁止 AdPreloadCoordinator.schedulePreloadAfterLoadingWhenReady（Loading 批已删）
+// 详见 ../splash-loading.md、../sdk-init-callback.md
 
 private var splashPreloadRequested = false
 
@@ -8,7 +9,6 @@ private suspend fun runPipeline() {
     val languageConfigured = isLanguageConfigured()
     splashRequestStarted = true
     scheduleSplashPreloadOnceWhenSdkReady(languageConfigured)
-    AdPreloadCoordinator.schedulePreloadAfterLoadingWhenReady(/* … */)
     awaitReleaseGate()
     showSplashOrNavigate()
 }

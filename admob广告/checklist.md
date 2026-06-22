@@ -37,9 +37,10 @@
 - [ ] Firebase `pdf_ad_config_a` / `pdf_ad_config_b` 已配置
 - [ ] B 面 commit 后 Logcat 可见 `【广告RC】远程Firebase覆盖 key=pdf_ad_config_b`
 - [ ] B 面 FC 失败时有重试日志（`AbSettlementCoordinator`）
-- [ ] **commit / A→B / FC apply 后无** `B面commit` / `schedulePreloadAfterLoadingOnBootstrapComplete` / `FC配置刷新后补 B 面预加载`（见 [mode-b-page-gate.md](mode-b-page-gate.md)）
+- [ ] **无 Loading 批**：Logcat 无 `Loading冷热启动结束` / `schedulePreloadAfterLoading`（见 [mode-b-page-gate.md](mode-b-page-gate.md)）
+- [ ] **commit / A→B / FC apply 后无** Bootstrap 整批 preload
 - [ ] 升 B 预加载仅经 **`bindModeBAdGateWhileVisible`**，且页面 **RESUMED** 才执行
-- [ ] Loading 批 **仅 Splash 挂号一次**，不由 commit 再挂
+- [ ] 冷启仅有 **UMP 批**（`UMP后预加载` / `UMP后开屏单次请求`）
 
 ## 广告位清单
 

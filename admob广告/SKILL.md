@@ -206,7 +206,7 @@ UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`（`scheduleSplashP
 
 详见 [sdk-init-callback.md](sdk-init-callback.md)、[preload-timing.md](preload-timing.md)、[mode-b-page-gate.md](mode-b-page-gate.md)、[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)。
 
-**禁止** commit / A→B / FC 后在 Bootstrap 里整批 `schedulePreloadAfterLoading*` 或 `preloadLanguageFunnel*`；升 B 走各页 `bindModeBAdGateWhileVisible`。
+**禁止** commit / A→B / FC / **Splash Loading 批** 应用级整批 `schedulePreloadAfterLoading*`；升 B 走各页 `bindModeBAdGateWhileVisible`；冷启全局仅 **UMP 批**。
 
 ### Step 3：默认广告 JSON + Firebase
 

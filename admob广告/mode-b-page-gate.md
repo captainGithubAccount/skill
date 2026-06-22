@@ -1,6 +1,6 @@
 # A→B 升面：页面分发（非后台整批补货）
 
-> **一句话**：AB commit / FC 刷新 **不再**在 `PdfAppAdsBootstrap` 里整批 `preloadAd`；升 B 只 **通知当前 RESUMED 的前台页面**，各页在 `bindModeBAdGateWhileVisible` 里自行 preload/bind。
+> **一句话**：不在 Application / Splash **应用级**整批 `preloadAdAwait`；升 B 只 **通知当前 RESUMED 的前台页面**，各页在 `bindModeBAdGateWhileVisible` 里自行 preload/bind。
 
 **金样**：`pdf/app/.../ads/ModeBAdGateLifecycle.kt`
 
@@ -10,38 +10,45 @@
 
 | 禁止项 | 原位置 | 原因 |
 |--------|--------|------|
-| commit 后 `preloadLanguageFunnelAfterModeBCommit` | `commitAbFace` | 后台替语言页要货，GA sense 归属乱 |
-| commit 后 `schedulePreloadAfterLoadingWhenReady` | `commitAbFace` | 与 Splash 已挂号重复 |
+| commit 后 `preloadLanguageFunnelAfterModeBCommit` | `commitAbFace` | 后台替语言页要货 |
+| commit 后 `schedulePreloadAfterLoadingWhenReady` | `commitAbFace` | 应用级整批补货 |
 | A→B 后 `schedulePreloadAfterLoadingOnBootstrapComplete` | `notifyModeBUpgraded` | 应用级整批补货 |
-| FC 后 `schedulePreloadAfterRemoteConfigRefresh` | `applyRemoteConfigCore` | 等同再跑一轮 Loading 批（enter/back/语言/底栏/大原生） |
+| FC 后 `schedulePreloadAfterRemoteConfigRefresh` | `applyRemoteConfigCore` | FC 后再跑整批 B 面 request |
+| **Splash Loading 批** `schedulePreloadAfterLoadingWhenReady` | `SplashLaunchPipeline` | 等 commit 后串行 await 全 B 位；与「页面分发」冲突 |
 
-**③ FC 刷新批是什么（已删除）**：Firebase 拉到 `pdf_ad_config_b` 后，在 **applicationScope** 里 **串行 await** 再 preload 一批 B 面位（enter → back → 语言 → 底栏 → 大原生），**不是**只刷新 JSON，而是 **又打一轮网络 request**。
+**Loading 批 ≠ UMP 批**（勿混）：
+
+| | UMP 批（保留） | Loading 批（已删） |
+|---|----------------|-------------------|
+| 入口 | `preloadAfterUmpConsent` + 开屏单次 preload | `schedulePreloadAfterLoadingWhenReady` |
+| 时机 | UMP 结束、SDK **首次** isInit | Splash 挂号 → **等 commit** → 串行 |
+| 协程 | Splash **页面级**，并行 fire-and-forget | **applicationScope**，`preloadAdAwait` 串行 |
+| 典型 scene | `UMP后预加载-*` / `UMP后开屏单次请求` | `Loading冷热启动结束-*` |
 
 ---
 
-## 2. 仍保留的全局预加载（仅两条线）
+## 2. 仍保留的全局预加载（仅 UMP 批 + 页面/补货）
 
-| 批次 | 触发 | 协程 | 说明 |
-|------|------|------|------|
-| **UMP 批** | UMP + SDK 就绪 | Splash **页面级** `preloadAd` 并行 | 语言（未选语言）+ enter/back + 开屏单次 |
-| **Loading 批** | Splash 管线 **挂号一次** | **应用级** `preloadAdAwait` 串行 | 等 commit 后 enter→back→语言→底栏→大原生；**不由 commit 再挂** |
+| 批次 | 触发 | 说明 |
+|------|------|------|
+| **UMP 批** | UMP + SDK 就绪，Splash 页面级并行 | 语言（未选语言）+ enter/back + 开屏 1 次 |
+| **进主页** | `MainActivity` initView | `preloadOnMainEntry`、Banner 现场 load |
+| **升 B 页面分发** | `bindModeBAdGateWhileVisible` | 仅 RESUMED 页 |
+| **展示后补货** | `AdReplenishCoordinator` | 曝光消耗后再 preload |
 
 ---
 
 ## 3. 页面分发：`bindModeBAdGateWhileVisible`
 
 ```kotlin
-// Activity.onCreate（super 之后）或 Fragment.initView
-lifecycle.addObserver(ModeBAdGateLifecycle(...))
-// 或
 bindModeBAdGateWhileVisible { /* 本页 preload / bind / Banner 重建 */ }
 ```
 
 | 规则 | 说明 |
 |------|------|
-| 注册时机 | **onResume** 注册监听，**onPause** 移除（页面不可见不收广播） |
-| 回调条件 | 仅当 `lifecycle >= RESUMED` 才执行 `onGateReady` |
-| 升 B 通知 | `notifyModeBUpgraded` **只** `invoke` 已注册监听，**不再**调 Coordinator 整批 preload |
+| 注册时机 | **onResume** 注册，**onPause** 移除 |
+| 回调条件 | 仅 `lifecycle >= RESUMED` |
+| 升 B 通知 | `notifyModeBUpgraded` 只 invoke 已注册监听 |
 
 ### 金样已接入页面
 
@@ -49,28 +56,19 @@ bindModeBAdGateWhileVisible { /* 本页 preload / bind / Banner 重建 */ }
 |------|------------------------|
 | `LanguageActivity` | settings：`preloadLanguageAds`；bind 语言原生 |
 | `MainActivity` | Banner 重建 + 收藏 Tab 大原生 preload |
-| `ToolsFragment` | 工具页大原生 preload + 刷新列表 |
-| `BookmarksFragment` | 刷新书签列表原生行 |
+| `ToolsFragment` | 工具页大原生 preload |
+| `BookmarksFragment` | 刷新书签列表原生 |
 | `ConvertFinishActivity` | bind 成功页大原生 |
 
 ---
 
-## 4. 与曝光补货区分
+## 4. 验收 Logcat
 
-| 类型 | 触发 | 是否保留 |
-|------|------|----------|
-| **页面升 B 分发** | commit / RC → 前台页面 listener | ✅ 上节 |
-| **展示消耗后补货** | `AdReplenishCoordinator` / enter·back 展示后 preload | ✅ 不变 |
-
----
-
-## 5. 验收 Logcat
-
-- commit 后 **无** `B面commit后补预加载` / `FC配置刷新后补 B 面预加载` / `Loading结束后台预加载已调度`（来自 commit 路径）
-- 升 B 时若用户 **不在** 语言/主页：**无** 该页 scene 的 preload
-- 升 B 时若用户 **正在** 语言页 RESUMED：可见 `设置入口-语言页预加载` 或 bind 相关日志
+- **无** `Loading结束后台预加载已调度` / `Loading冷热启动结束-*`
+- commit / A→B / FC 后 **无** Bootstrap 层 Coordinator 整批 preload
+- 冷启可见 `UMP后预加载` / `UMP后开屏单次请求`
 
 ```bash
-rg "B面commit|schedulePreloadAfterLoadingOnBootstrapComplete|schedulePreloadAfterRemoteConfigRefresh" app/
-# 应无调用（Coordinator 内方法可删除）
+rg "schedulePreloadAfterLoading|Loading冷热启动结束|Loading结束后台" app/
+# 应无匹配
 ```

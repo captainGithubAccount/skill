@@ -66,9 +66,9 @@ UMP 结束 → runWhenSdkInitializedOnce {
              preloadAfterUmpConsent（语言/enter/back）
              preloadAd(LOADING_SPLASH) ×1
            }
-         → Loading 后后台 preloadAdAwait B 位（await commit+isInit，另路径）
          → 放行闸：≥2s 且 (isReady 或 UMP+10s)
          → obtainForShow：有缓存 show，无缓存跳页
+         → B 其它位：进主页 / 各页 RESUMED 分发（无 Loading 批）
 ```
 
 ```kotlin

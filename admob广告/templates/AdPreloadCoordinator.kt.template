@@ -1,12 +1,11 @@
-// AdPreloadCoordinator 模板 — 开屏请求在 SplashLaunchPipeline，本类不含 LOADING_SPLASH
-// 详见 ../splash-loading.md、../mode-b-page-gate.md
+// AdPreloadCoordinator 模板 — 仅 UMP 批 + 进主页/页内 preload；无 Loading 批
+// 详见 ../mode-b-page-gate.md、../preload-timing.md
 
 object AdPreloadCoordinator {
 
     private const val TAG = "AdPreload"
-    private val afterLoadingPreloadScheduled = AtomicBoolean(false)
 
-    /** UMP 后：语言/enter/back；不含开屏（开屏由 Splash 单次 preloadAd） */
+    /** UMP 后：语言/enter/back；开屏由 Splash 单次 preloadAd */
     fun preloadAfterUmpConsent(activity: FragmentActivity, languageConfigured: Boolean) {
         if (!MonetizationKit.isInit) return
         val scene = "UMP后预加载"
@@ -26,55 +25,9 @@ object AdPreloadCoordinator {
         }
     }
 
-    /**
-     * Loading 批：仅 Splash 管线挂号一次（applicationScope + await commit）。
-     * 禁止在 commitAbFace / notifyModeBUpgraded / FC apply 后再挂。
-     */
-    fun schedulePreloadAfterLoadingWhenReady(
-        preferredHost: FragmentActivity?,
-        languageConfigured: Boolean,
-        guideCompleted: Boolean,
-    ) {
-        if (!afterLoadingPreloadScheduled.compareAndSet(false, true)) return
-        MyApplication.applicationScope.launch(Dispatchers.IO) {
-            awaitBootstrapAndSdkReady()
-            val host = resolveHost(preferredHost) ?: run {
-                afterLoadingPreloadScheduled.set(false)
-                return@launch
-            }
-            withContext(Dispatchers.Main) {
-                runPreloadAfterLoading(host, languageConfigured, guideCompleted)
-            }
-        }
-    }
-
-    /** 后台协程内 preloadAdAwait；禁止含 LOADING_SPLASH */
-    private suspend fun runPreloadAfterLoading(
-        activity: FragmentActivity,
-        languageConfigured: Boolean,
-        guideCompleted: Boolean,
-    ) {
-        if (!PdfAppAdsBootstrap.currentIsModeB()) return
-        withContext(Dispatchers.Main) {
-            if (PdfAppAdsBootstrap.canShowAd(AdSense.ENTER_INTERSTITIAL)) {
-                activity.preloadAdAwait(AdSense.ENTER_INTERSTITIAL, "Loading冷热启动结束-enter")
-            }
-            if (PdfAppAdsBootstrap.canShowAd(AdSense.BACK_INTERSTITIAL)) {
-                activity.preloadAdAwait(AdSense.BACK_INTERSTITIAL, "Loading冷热启动结束-back")
-            }
-            if (!languageConfigured) {
-                if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
-                    activity.preloadAdAwait(AdSense.LANGUAGE_NATIVE, "Loading冷热启动结束-语言原生")
-                }
-                if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
-                    activity.preloadAdAwait(AdSense.LANGUAGE_INTERSTITIAL, "Loading冷热启动结束-语言插屏")
-                }
-            }
-            // 底栏插屏、大原生、Banner 信号等同 PDF 金样
-        }
-    }
+    // ❌ 禁止 schedulePreloadAfterLoadingWhenReady / runPreloadAfterLoading / awaitBootstrapAndSdkReady
 
     suspend fun preloadOnMainEntry(activity: FragmentActivity) { /* 见金样 */ }
 }
 
-// A→B / RC：各页 bindModeBAdGateWhileVisible — 见 ModeBAdGateLifecycle.kt、mode-b-page-gate.md
+// A→B：bindModeBAdGateWhileVisible — 见 ModeBAdGateLifecycle.kt
