@@ -13,8 +13,10 @@
 - [ ] `MonetizationKit.prepareBeforeConsent` 已调用
 - [ ] `AdRemoteConfigBridge.applyDefaultLocalAssetsA` 在展示前执行
 - [ ] `MonetizationKit.init` 已调用且 `isInit=true`
+- [ ] **全进程仅 1 次** `MobileAds.initialize`（仅在 `MonetizationKit.init`；`AdmobListenerImpl.init` / `warmUpMobileAds` 不得 duplicate）
+- [ ] 冷启 Logcat 仅 1 条 `【SDK初始化】AdMob MobileAds.initialize 完成 isInit=true`
 - [ ] UMP 结束后 `isUmpResolved=true`（双闸门均 true 才请求）
-- [ ] Debug：`AdTestDeviceIdLog` 在 `MobileAds.initialize` 前注入测试设备 id
+- [ ] Debug：`AdTestDeviceIdLog.applyDebugConfigurationBeforeInit` 在 **唯一** `MobileAds.initialize` 之前执行
 - [ ] 冷启开屏已接 UMP（见 [ump接入](../ump接入/SKILL.md)）
 
 ## AB 面与远程配置（若接入）
@@ -62,10 +64,17 @@ rg "loadAd\(|preloadAdAwait" app/**/splash/
 rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt  # 应无匹配
 ```
 
+```bash
+# 全进程 initialize 应仅 MonetizationKit.init 一处
+rg "MobileAds\.initialize" --glob "*.kt"
+# admob/AdmobListenerImpl 不应命中 initialize
+```
+
 ## 验收（用户真机）
 
 - [ ] Logcat 过滤 `TAG-->>AdRequest` 可见 preload 成功 / cacheHit
 - [ ] Logcat 过滤 `TAG-->>vmodify` 可见 `【广告位判定】→ 可用`
+- [ ] 冷启 Logcat **无 duplicate** `MobileAds.initialize 完成`（仅 1 条 SDK 初始化成功）
 - [ ] 插屏无缓存时不崩溃、可继续业务流程（showSkippedNoCache）
 - [ ] A 面不展示 B 专属位（Banner、语言广告等）
 - [ ] B 面 + FC 成功后可展示 Banner

@@ -121,3 +121,39 @@ rg "LOADING_SPLASH" app/**/ads/AdPreloadCoordinator.kt
 - [templates/splash-snippet.kt.template](templates/splash-snippet.kt.template) — 管线片段
 - [checklist.md](checklist.md) — 开屏验收勾选项
 - [reference.md](reference.md) — API 详解
+
+---
+
+## 9. SDK init 竞态与可选修复
+
+**现象**：`first_open` 人数显著高于开屏 `ad_request` 触发人数（例如 166 vs 65）。
+
+**根因（与 initialize 次数无关）**：
+
+1. `Application` IO 协程异步执行 `MonetizationKit.init` → 回调才 `isInit=true`
+2. UMP 快路径结束 → `requestSplashOnceAfterUmp()` **只试一次**
+3. 若此时 `MonetizationKit.isInit==false`，`canShowAd(LOADING_SPLASH)` 因「SDK未init」失败 → **本进程不再补发开屏**
+
+**方案 A（已落地）**：全进程单点 `MobileAds.initialize`，避免多次 init 回调干扰；**不保证**消除上述竞态。
+
+**方案 C（可选 · videodownload 金样）**：UMP 通过后、`preloadAd` 前增加短等待：
+
+```kotlin
+// StartActivity 等价：最多等 2500ms 直至 isInit
+private suspend fun awaitSdkInitIfNeeded() {
+    if (MonetizationKit.isInit) return
+    withTimeoutOrNull(2500L) {
+        while (!MonetizationKit.isInit) delay(50)
+    }
+}
+```
+
+接入前与产品确认：是否接受 Splash 最多 +2.5s 以换开屏触发率。
+
+**Logcat 对照**：
+
+| 日志 | 含义 |
+|------|------|
+| `【广告位判定】→ 不可用 \| 原因=SDK未init` | UMP 后开屏被跳过（竞态） |
+| `开屏单次请求开始` | 闸门通过且已 preload |
+| `【SDK初始化】AdMob MobileAds.initialize 完成` | 通常晚于或早于 UMP，取决于设备与 IO 调度 |

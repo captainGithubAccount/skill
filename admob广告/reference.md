@@ -88,6 +88,41 @@ private suspend fun showSplashOrNavigate() {
 
 冷启须 `isInit && isUmpResolved`。曝光后补货走 `AdReplenishCoordinator`，不在 Loading 后再 `preloadAdAwait(开屏)`。
 
+## SDK 单点初始化
+
+**原则（PDF 2026-06 · 方案 A）**：全进程 **仅** `MonetizationKit.init` 内调用一次 `MobileAds.initialize`；`isInit=true` 只在该回调里置位。
+
+| 入口 | 是否调用 `MobileAds.initialize` | 是否置 `isInit` |
+|------|----------------------------------|-----------------|
+| `MonetizationKit.prepareBeforeConsent` | ❌ | ❌ |
+| `MonetizationKit.warmUpMobileAds` | ❌（仅 Debug 测试设备配置） | ❌ |
+| `MonetizationKit.init` | ✅ **唯一** | ✅ |
+| `AdBridgeIntegration.install` → `FloorziqAd.initAd()` → `AdmobListenerImpl.init` | ❌（SPI 占位） | ❌ |
+
+**时序**：
+
+```
+Application IO 协程
+  prepareBeforeConsent → AdTestDeviceIdLog.applyDebugConfigurationBeforeInit
+  applyDefaultLocalAssetsA
+  init → MobileAds.initialize 回调 → isInit=true → FloorziqAd.initAd() → initialized()
+  PdfAppAdsBootstrap.run（并行 AB）
+```
+
+**Logcat 验收**：
+
+- 冷启仅 **1 条** `【SDK初始化】AdMob MobileAds.initialize 完成 isInit=true`
+- Debug 另见 `【AdMob测试设备】MobileAds.initialize 回调完成`（在 init 回调内）
+- **不应**在 prepare/warmUp 阶段出现 initialize 完成日志
+
+**竞态提示**：`Application` 异步 `init` 与 UMP 快路径并行时，Splash 可能在 `isInit=false` 时判闸门 → 开屏 `ad_request` 漏发（与 `first_open` 人数差）。initialize 去重**不单独解决**该缺口；可选在 UMP 后 `await isInit`（videodownload `StartActivity.awaitSdkInitIfNeeded` 约 2.5s），见 [splash-loading.md §9](splash-loading.md#9-sdk-init-竞态与可选修复)。
+
+**禁止**：
+
+- `AdmobListenerImpl.init` 内再 `MobileAds.initialize`
+- `warmUpMobileAds` 内 duplicate initialize
+- 用 Logcat 有 `FloorziqAd.initAd` 字样代替 `isInit=true` 验收
+
 ### Banner（PDF 主页）
 
 ```

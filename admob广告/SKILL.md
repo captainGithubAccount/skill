@@ -121,11 +121,13 @@ Gradle / Manifest 见 [templates/gradle-snippet.kts.template](templates/gradle-s
 ### Step 2：Application 最小初始化
 
 ```kotlin
-MonetizationKit.prepareBeforeConsent(context)          // RC 管家、前台监听、MobileAds 预热
+MonetizationKit.prepareBeforeConsent(context)          // RC 管家、前台监听、Debug 测试设备配置（不 initialize）
 AdRemoteConfigBridge.applyDefaultLocalAssetsA(context) // A 面 assets 兜底
-MonetizationKit.init(context) { /* SDK 就绪 */ }
+MonetizationKit.init(context) { /* isInit=true；全进程唯一 MobileAds.initialize */ }
 // 并行：PdfAppAdsBootstrap.run(context) → commit 后 applyByMode
 ```
+
+**SDK 单点初始化（方案 A · PDF 2026-06）**：全进程仅 `MonetizationKit.init` 内调用一次 `MobileAds.initialize`；`AdmobListenerImpl.init()` / `warmUpMobileAds` **不再** duplicate initialize。详见 [reference.md#sdk-单点初始化](reference.md#sdk-单点初始化)。
 
 见 [templates/Application-init-snippet.kt.template](templates/Application-init-snippet.kt.template)。
 
@@ -179,7 +181,7 @@ AI 对每个位置：
 **VModifyLog 关键文案**：
 
 - `【广告位判定】→ 不可用 | 原因=远程JSON未开放该ad_sense` — A 面 JSON 无该位或 B 远程未拉到
-- `【广告位判定】→ 不可用 | 原因=UMP流程未完成` — 开屏/预加载早于 UMP 结束
+- `【广告位判定】→ 不可用 | 原因=SDK未init` — Application 未走完 `MonetizationKit.init` 回调，或 Splash 早于 isInit 判闸门（见 [splash-loading.md](splash-loading.md) await isInit）
 - `【广告RC】远程key为空 | key=pdf_ad_config_b` — B 面 FC 失败，Banner 等 B 位不可用
 
 ## Debug 测试设备（与 UMP 区分）

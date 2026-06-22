@@ -11,11 +11,11 @@ AdBridgeIntegration.onExternalFullScreenAdClick = {
 }
 
 applicationScope.launch(Dispatchers.IO) {
-    // 1. 广告引擎预热（含 Debug setTestDeviceIds，不置 isInit）
+    // 1. 广告侧准备：RC 管家、前台监听、Debug 测试设备配置（不 initialize、不置 isInit）
     MonetizationKit.prepareBeforeConsent(applicationContext)
     // 2. A 面 assets 兜底（B 面 commit 前全员可用）
     AdRemoteConfigBridge.applyDefaultLocalAssetsA(applicationContext)
-    // 3. SDK 初始化 → isInit=true
+    // 3. 全进程唯一 MobileAds.initialize → isInit=true
     MonetizationKit.init(applicationContext) {
         AdRequestLog.i("【SDK初始化】Application init 回调完成")
     }
