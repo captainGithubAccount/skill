@@ -3,8 +3,9 @@ name: admob-ad-monetization
 description: >-
   Android AdMob 广告层可移植接入：AdBridge/admob/AdBase 模块、AdSense 广告位、
   preload/bindNativeAd/showAd/Banner、开屏 UMP+SDK一次性回调后单次 preload（sdk-init-callback/splash-loading）、
+  A→B 升面仅页面 RESUMED 时分发（mode-b-page-gate/preload-timing）、禁止 commit/FC 后台整批 preload、
   远程 JSON、MonetizationKit 双闸门、开屏 load/preload 多入口须用户确认调用点后才能接入。
-  当用户提到 AdMob、广告位、开屏、loading 开屏、preloadAd、bindNativeAd、showAd、接入广告 时应用。
+  当用户提到 AdMob、广告位、开屏、loading 开屏、preloadAd、bindNativeAd、showAd、A→B、接入广告 时应用。
 ---
 
 # AdMob 广告实现（可移植层）
@@ -27,6 +28,7 @@ description: >-
 | 请求链路日志 | `AdBridge/.../utils/AdRequestLog.kt` |
 | AB/RC 编排 | `app/.../bootstrap/PdfAppAdsBootstrap.kt` |
 | 预加载编排 | `app/.../ads/AdPreloadCoordinator.kt` |
+| A→B 页面分发 | `app/.../ads/ModeBAdGateLifecycle.kt` |
 | enter/back 插屏 | `app/.../ads/AdNavigationCoordinator.kt` |
 | 主页 Banner | `app/.../ads/MainBannerController.kt` |
 | 启动开屏 | `app/.../splash/SplashLaunchPipeline.kt` |
@@ -34,6 +36,8 @@ description: >-
 | A 面默认 JSON | `app/src/main/assets/ad_remote_config_default_a.json` |
 
 - **SDK 就绪回调 + 请求时机（必读）**：[sdk-init-callback.md](sdk-init-callback.md)
+- **全部 preload 时机（大白话）**：[preload-timing.md](preload-timing.md)
+- **A→B 升面页面分发（必读）**：[mode-b-page-gate.md](mode-b-page-gate.md)
 - **开屏 Loading 策略（必读）**：[splash-loading.md](splash-loading.md)
 - **详解**：[reference.md](reference.md)
 - **产品对照**：[产品阅读.md](产品阅读.md)
@@ -200,7 +204,9 @@ UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`（`scheduleSplashP
 
 **禁止** `if (!isInit) return` 整批跳过 UMP 后预加载；**禁止** Splash 再调 `MonetizationKit.init`。
 
-详见 [sdk-init-callback.md](sdk-init-callback.md)、[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)。
+详见 [sdk-init-callback.md](sdk-init-callback.md)、[preload-timing.md](preload-timing.md)、[mode-b-page-gate.md](mode-b-page-gate.md)、[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)。
+
+**禁止** commit / A→B / FC 后在 Bootstrap 里整批 `schedulePreloadAfterLoading*` 或 `preloadLanguageFunnel*`；升 B 走各页 `bindModeBAdGateWhileVisible`。
 
 ### Step 3：默认广告 JSON + Firebase
 

@@ -159,10 +159,10 @@ sequenceDiagram
 
 | 场景 | 建议 |
 |------|------|
-| **UMP 后 fire-and-forget 一批**（开屏 + 语言 + enter/back） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce`（`preloadAfterUmpConsent` + 开屏） |
-| Loading 后 `runPreloadAfterLoading` | 已有 `awaitBootstrapAndSdkReady` 等 isInit（最多 30s），**不必**再套 UMP 回调 |
-| B 面 commit 补货 | `preloadLanguageFunnelAfterModeBCommit`（commit 时 init 通常已就绪） |
-| 进主页 / 语言页后的 preload | 直接 `preloadAd` |
+| **UMP 后 fire-and-forget 一批**（语言 + enter/back；开屏单次） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce` |
+| Loading 后 `runPreloadAfterLoading` | 已有 `awaitBootstrapAndSdkReady`；**仅 Splash 挂号一次** |
+| A→B / FC 刷新 | **禁止** Bootstrap 整批 preload；见 [mode-b-page-gate.md](mode-b-page-gate.md) |
+| 进主页 / 语言页后的 preload | 页面 initView / `bindModeBAdGateWhileVisible` |
 
 ---
 
