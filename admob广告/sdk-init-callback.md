@@ -1,13 +1,14 @@
 # SDK 初始化回调与请求时机（PDF 金样 · 2026-06）
 
-> **一句话**：Application 异步 `MonetizationKit.init` 与 Splash UMP **并行**；业务页在 **UMP 已结束** 后注册 `runWhenSdkInitializedOnce`，在 **首次 `isInit=true`** 且闸门通过时 **只请求一次**；勿在 Splash 再调 `MonetizationKit.init`，勿用 `init { }` 入参当全局监听。
+> **一句话**：Application 异步 `MonetizationKit.init` 与 Splash UMP **并行**；UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`，SDK 就绪后统一触发 **UMP 后首批 preload**（语言插屏/原生、enter/back、开屏）；勿在 isInit 前整批 skip。
 
 **金样代码**：
 
 | 层级 | 路径 |
 |------|------|
 | 一次性 SDK 就绪 API | `AdBridge/.../MonetizationKit.runWhenSdkInitializedOnce` |
-| 开屏请求编排 | `app/.../splash/SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` |
+| UMP 后统一调度 | `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` |
+| UMP 后非开屏 preload | `AdPreloadCoordinator.preloadAfterUmpConsent`（6a434ef4 同批，须在 SDK 回调内调） |
 | Application 单点 init | `app/.../MyApplication.launchAdsWarmup` |
 
 ---
@@ -18,7 +19,7 @@
 
 - **preload / load 多于 1 处**：必须逐条说明文件、函数、是否会重复请求  
 - **用户回复「确认调用点」前**：禁止改 Splash / Coordinator / 模板落地  
-- PDF 金样目标：**网络 preload 仅** `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` 一处  
+- PDF 金样目标：UMP 后 **一个** `runWhenSdkInitializedOnce` → `preloadAfterUmpConsent` + 开屏（与 6a434ef4 同批广告位，仅改时机）
 
 ---
 
@@ -26,7 +27,7 @@
 
 | 问题 | 原因 |
 |------|------|
-| UMP 后立刻 preload 漏请求 | `enableFor` 要求 `isInit && isUmpResolved`；UMP 常比 `MobileAds.initialize` 回调**先**结束 |
+| UMP 后立刻 preload 漏请求 | `enableFor` 要求 `isInit && isUmpResolved`；旧代码 `if (!isInit) return` 会**整批跳过**语言/enter/back |
 | 在 Splash 再调 `MonetizationKit.init` | 可能与 Application **竞态** duplicate initialize；且 `init { }` 入参在重复 `init()` 时会**再次**执行 |
 | 固定 await 2.5s（videodownload） | 能修竞态但拖慢启动；PDF 金样改用 **状态 + 一次性回调** |
 
@@ -46,9 +47,10 @@ MonetizationKit.init(applicationContext) {
     AdRequestLog.i("【SDK初始化】Application init 回调完成")
 }
 
-// ✅ Splash：UMP 结束后
+// ✅ Splash：UMP 结束后（一个回调内顺序执行）
 MonetizationKit.runWhenSdkInitializedOnce {
-    requestSplashPreloadIfNeeded() // 内部 canShowAd + splashPreloadRequested
+    AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
+    requestSplashPreloadIfNeeded()
 }
 
 // ❌ Splash 禁止
@@ -75,38 +77,40 @@ fun runWhenSdkInitializedOnce(block: () -> Unit)
 
 ---
 
-## 4. 开屏标准编排（复制到新项目）
+## 4. UMP 后首批 preload 标准编排（开屏 + 语言/enter/back）
 
-### 4.1 注册点：**UMP 结束之后**
+### 4.1 注册点：**UMP 结束之后（仅一次 `runWhenSdkInitializedOnce`）**
 
 ```kotlin
 // runPipeline 内，awaitConsent / markUmpResolved 之后
-splashRequestStarted = true // 放行闸可开始（与 preload 是否成功无关）
-scheduleSplashPreloadOnceWhenSdkReady()
-```
+splashRequestStarted = true
+scheduleSplashPreloadOnceWhenSdkReady(languageConfigured)
 
-**不在 UMP 前注册**：此时 `isUmpResolved=false`，即使 `isInit=true` 也会被 `enableFor` 拦住。
-
-### 4.2 监听 + 本地防重
-
-```kotlin
-private var splashPreloadRequested = false
-
-private fun scheduleSplashPreloadOnceWhenSdkReady() {
+private fun scheduleSplashPreloadOnceWhenSdkReady(languageConfigured: Boolean) {
     MonetizationKit.runWhenSdkInitializedOnce {
+        AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
         requestSplashPreloadIfNeeded()
     }
 }
+```
 
-private fun requestSplashPreloadIfNeeded() {
-    if (splashPreloadRequested) return
-    if (!hostCanShowAd(AdSense.LOADING_SPLASH)) {
-        log("开屏单次请求跳过：闸门未过")
-        return
-    }
-    splashPreloadRequested = true
-    activity.preloadAd(AdSense.LOADING_SPLASH, "UMP后开屏单次请求")
-}
+**UMP 后 fire-and-forget 位（金样，均在上述回调内）**：
+
+| AdSense | 条件 |
+|---------|------|
+| `LANGUAGE_INTERSTITIAL` / `LANGUAGE_NATIVE` | `!languageConfigured`（Loader 层 A 方案 skip；不卡 `canShowAd`） |
+| `ENTER_INTERSTITIAL` / `BACK_INTERSTITIAL` | `canShowAd` |
+
+**不在 UMP 前注册**；**禁止** `if (!MonetizationKit.isInit) return` 整批跳过（旧 `preloadAfterUmpConsent`）。
+
+### 4.2 开屏 + 批次防重
+
+```kotlin
+// Coordinator：本 launch 周期一批只执行一次
+private val umpConsentPreloadExecuted = AtomicBoolean(false)
+
+// Splash 开屏：本页只 preload 一次
+private var splashPreloadRequested = false
 ```
 
 ### 4.3 执行 preload 的充分条件
@@ -155,10 +159,10 @@ sequenceDiagram
 
 | 场景 | 建议 |
 |------|------|
-| **开屏**（UMP 后立刻要请求） | **必须**用本模式（或等价：UMP 后注册 + 等 isInit） |
-| UMP 后 `AdPreloadCoordinator.preloadAfterUmpConsent` | 同样受 `enableFor` 约束；若 init 晚于 UMP，Coordinator 内 preload 也会被 skip。**开屏已单独补发**；其它位可在 Coordinator 内对关键位补同样模式（按需） |
-| 进主页后的 preload | 通常 init 早已完成，直接 `preloadAd` 即可 |
-| Banner 现场 load | `onResume` 时 init 一般已 true |
+| **UMP 后 fire-and-forget 一批**（开屏 + 语言 + enter/back） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce`（`preloadAfterUmpConsent` + 开屏） |
+| Loading 后 `runPreloadAfterLoading` | 已有 `awaitBootstrapAndSdkReady` 等 isInit（最多 30s），**不必**再套 UMP 回调 |
+| B 面 commit 补货 | `preloadLanguageFunnelAfterModeBCommit`（commit 时 init 通常已就绪） |
+| 进主页 / 语言页后的 preload | 直接 `preloadAd` |
 
 ---
 

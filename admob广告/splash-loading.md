@@ -20,7 +20,9 @@ sequenceDiagram
     S->>UMP: awaitConsent（冷启必须）
     UMP-->>S: isUmpResolved=true
     S->>C: preloadAfterUmpConsent（不含开屏）
-    S->>MK: runWhenSdkInitializedOnce → preloadAd LOADING_SPLASH ×1
+    S->>MK: runWhenSdkInitializedOnce
+    MK->>C: preloadAfterUmpConsent（语言/enter/back）
+    MK->>L: preloadAd LOADING_SPLASH ×1
     S->>C: schedulePreloadAfterLoadingInBackground
     C->>BG: enter/back/语言… preloadAdAwait
     loop 放行闸 MIN_ANIM 2s 且 缓存就绪或 UMP+10s
@@ -41,7 +43,7 @@ sequenceDiagram
 
 | 步骤 | 做什么 | 禁止 |
 |------|--------|------|
-| **① UMP 后请求** | `runWhenSdkInitializedOnce { preloadAd(LOADING_SPLASH) }` 一次 | 同会话再 `loadAd` / 再 preload 开屏 / UMP 后立即 preload（init 未就绪） |
+| **① UMP 后请求** | 一个 `runWhenSdkInitializedOnce`：`preloadAfterUmpConsent` + 开屏 preload | UMP 后立即 preload / `if (!isInit) return` 整批跳过 |
 | **② 等 Loading 结束** | ≥2s 动画；缓存就绪可提前放行；UMP 后最长等 10s | Splash 协程 await 其它位 preload 链 |
 | **③ 展示** | `SplashAdLoader.obtainForShow()` 有货才 show | 无缓存现场 `loadAd`；无货仍阻塞用户 |
 

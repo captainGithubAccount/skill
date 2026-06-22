@@ -1,74 +1,23 @@
-// 开屏 — PDF 金样 SplashLaunchPipeline（UMP + SDK 一次性回调 + Loading 读缓存展示）
-// 复制到 app/.../splash/SplashLaunchPipeline.kt，按项目改 Bootstrap / Binding / 路由
+// 开屏 — SplashLaunchPipeline（UMP 后 SDK 回调内：6a434ef4 同批 preload + 开屏）
 // 详见 ../splash-loading.md 与 ../sdk-init-callback.md
-
-private companion object {
-    const val MIN_ANIM_MS = 2_000L
-    const val MAX_AFTER_UMP_MS = 10_000L
-    const val GATE_POLL_MS = 40L
-}
 
 private var splashPreloadRequested = false
 
 private suspend fun runPipeline() {
-    // … awaitConsent() 冷启；热启 markUmpResolved …
+    // … awaitConsent …
     val languageConfigured = isLanguageConfigured()
-
-    AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
     splashRequestStarted = true
-    scheduleSplashPreloadOnceWhenSdkReady()
-    AdPreloadCoordinator.schedulePreloadAfterLoadingInBackground(
-        preferredHost = activity,
-        languageConfigured = languageConfigured,
-        guideCompleted = true,
-    )
-
+    scheduleSplashPreloadOnceWhenSdkReady(languageConfigured)
+    AdPreloadCoordinator.schedulePreloadAfterLoadingWhenReady(/* … */)
     awaitReleaseGate()
     showSplashOrNavigate()
 }
 
-/** UMP 已结束：注册 SDK 一次性回调，isInit 就绪后再 preload（解决 init∥UMP 竞态） */
-private fun scheduleSplashPreloadOnceWhenSdkReady() {
+private fun scheduleSplashPreloadOnceWhenSdkReady(languageConfigured: Boolean) {
     MonetizationKit.runWhenSdkInitializedOnce {
+        AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
         requestSplashPreloadIfNeeded()
     }
 }
 
-private fun requestSplashPreloadIfNeeded() {
-    if (splashPreloadRequested) return
-    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) return
-    splashPreloadRequested = true
-    activity.preloadAd(AdSense.LOADING_SPLASH, "UMP后开屏单次请求")
-}
-
-/** ≥2s 动画；缓存就绪提前放行；UMP 后最长 10s */
-private fun tryPassReleaseGate(now: Long): Boolean {
-    if (!consentResolved || !splashRequestStarted) return false
-    if (now - startElapsed < MIN_ANIM_MS) return false
-    val pastDeadline = now >= adPhaseStartElapsed + MAX_AFTER_UMP_MS
-    if (pastDeadline) return true
-    return SplashAdLoader.isReady(AdSense.LOADING_SPLASH)
-}
-
-private suspend fun showSplashOrNavigate() {
-    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) {
-        onNavigateNext()
-        return
-    }
-    val ad = SplashAdLoader.obtainForShow(
-        activity,
-        AdSense.LOADING_SPLASH,
-        scene = "Loading开屏展示",
-    )
-    if (ad != null) {
-        ad.show(activity) { onNavigateNext() }
-    } else {
-        onNavigateNext()
-    }
-}
-
-// ❌ 禁止（旧 Skill 误接）：
-// requestSplashOnceAfterUmp()  // UMP 后立即 preload，init 未就绪会漏请求
-// MonetizationKit.init(activity) { preloadAd(...) }
-// suspend fun preloadAfterLoading() { preloadAdAwait(开屏); ... }
-// splashAd = activity.loadAd(LOADING_SPLASH, 10_000)
+private fun requestSplashPreloadIfNeeded() { /* 同 sdk-init-callback-snippet */ }

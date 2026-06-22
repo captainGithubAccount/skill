@@ -189,11 +189,16 @@ MonetizationKit.init(context) { /* isInit=true；全进程唯一 MobileAds.initi
 
 见 [templates/Application-init-snippet.kt.template](templates/Application-init-snippet.kt.template)。
 
-### Step 2.5：Splash SDK 一次性回调（开屏必读）
+### Step 2.5：Splash UMP 后统一 SDK 回调（开屏 + 首批 preload 必读）
 
 **前置**：已完成 [开屏调用点清点门禁](#开屏调用点清点门禁接入前强制--须用户确认) 且用户已「确认调用点」。
 
-UMP 结束后注册 `MonetizationKit.runWhenSdkInitializedOnce`，在 **首次 `isInit=true`** 且 `canShowAd` 通过时 preload 开屏 **一次**；**禁止** Splash 再调 `MonetizationKit.init`。
+UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`（`scheduleSplashPreloadOnceWhenSdkReady`），SDK 就绪后依次：
+
+1. `AdPreloadCoordinator.preloadAfterUmpConsent` — 语言插屏/原生、enter/back（与 6a434ef4 同批）  
+2. `requestSplashPreloadIfNeeded` — 开屏  
+
+**禁止** `if (!isInit) return` 整批跳过 UMP 后预加载；**禁止** Splash 再调 `MonetizationKit.init`。
 
 详见 [sdk-init-callback.md](sdk-init-callback.md)、[templates/sdk-init-callback-snippet.kt.template](templates/sdk-init-callback-snippet.kt.template)。
 
@@ -279,7 +284,7 @@ AI 对每个位置：
 ## 关键约定
 
 0. **开屏 load/preload 多入口**：接入前必须 [开屏调用点清点](#开屏调用点清点门禁接入前强制--须用户确认)，**用户确认调用点后**再改代码
-1. **开屏（见 [splash-loading.md](splash-loading.md) + [sdk-init-callback.md](sdk-init-callback.md)）**：UMP 后 `runWhenSdkInitializedOnce` → preload **一次** → Loading 放行闸 → `obtainForShow`
+1. **UMP 后首批 preload（见 [sdk-init-callback.md](sdk-init-callback.md)）**：一个 `runWhenSdkInitializedOnce` → 语言/enter/back + 开屏 → Loading 放行闸 → `obtainForShow`
 2. 插屏/原生：**先 preload，展示只 take 缓存**
 3. **禁止** Splash 协程内 `loadAd(开屏)`、`preloadAdAwait` 链、`AdPreloadCoordinator` 里再 preload 开屏
 4. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例

@@ -62,8 +62,11 @@ onDestroy → NativeAd.destroy()（扩展内已注册）
 详见 **[splash-loading.md](splash-loading.md)**、**[sdk-init-callback.md](sdk-init-callback.md)**。
 
 ```
-UMP 结束 → runWhenSdkInitializedOnce { preloadAd(LOADING_SPLASH) ×1 }
-         → 其它位后台 preload（不含开屏）
+UMP 结束 → runWhenSdkInitializedOnce {
+             preloadAfterUmpConsent（语言/enter/back）
+             preloadAd(LOADING_SPLASH) ×1
+           }
+         → Loading 后后台 preloadAdAwait B 位（await commit+isInit，另路径）
          → 放行闸：≥2s 且 (isReady 或 UMP+10s)
          → obtainForShow：有缓存 show，无缓存跳页
 ```

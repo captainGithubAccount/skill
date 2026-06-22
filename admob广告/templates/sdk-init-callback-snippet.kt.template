@@ -1,44 +1,21 @@
-// SDK 就绪一次性回调 + 开屏 preload（PDF 金样 · 2026-06）
+// SDK 就绪一次性回调 + UMP 后首批 preload（PDF 金样 · 对齐 6a434ef4 广告位，仅改时机）
 // 详见 ../sdk-init-callback.md
-//
-// ── Application（唯一 MonetizationKit.init）──
-// applicationScope.launch(Dispatchers.IO) {
-//     MonetizationKit.prepareBeforeConsent(applicationContext)
-//     AdRemoteConfigBridge.applyDefaultLocalAssetsA(applicationContext)
-//     MonetizationKit.init(applicationContext) {
-//         AdRequestLog.i("【SDK初始化】Application init 回调完成")
-//     }
-// }
-//
-// ── Splash：UMP 结束后注册，勿在 Splash 再调 MonetizationKit.init ──
 
 private var splashPreloadRequested = false
 
-// runPipeline 内：awaitConsent / markUmpResolved 之后
-private fun afterUmpResolvedScheduleAds() {
-    splashRequestStarted = true // 放行闸开始；与 preload 是否成功无关
-    scheduleSplashPreloadOnceWhenSdkReady()
-}
-
-private fun scheduleSplashPreloadOnceWhenSdkReady() {
+private fun scheduleSplashPreloadOnceWhenSdkReady(languageConfigured: Boolean) {
     MonetizationKit.runWhenSdkInitializedOnce {
+        AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
         requestSplashPreloadIfNeeded()
     }
 }
 
 private fun requestSplashPreloadIfNeeded() {
     if (splashPreloadRequested) return
-    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) {
-        AppLogUtils.iTag(TAG, "开屏单次请求跳过：闸门未过")
-        return
-    }
+    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LOADING_SPLASH)) return
     splashPreloadRequested = true
-    AppLogUtils.iTag(TAG, "开屏单次请求开始")
     activity.preloadAd(AdSense.LOADING_SPLASH, "UMP后开屏单次请求")
 }
 
-// ❌ 禁止：
-// MonetizationKit.init(activity) { preloadAd(...) }
-// UMP 后立即 preloadAd(开屏)
-// 未做「开屏调用点清点」、用户未「确认调用点」就改多处 preload/load — 见 SKILL.md §开屏调用点清点门禁
-// 固定 awaitSdkInitIfNeeded(2500)
+// ❌ 禁止：UMP 结束立刻 preloadAfterUmpConsent / 开屏 preload
+// ❌ 禁止：if (!MonetizationKit.isInit) return 整批跳过（6a434ef4 旧写法）
