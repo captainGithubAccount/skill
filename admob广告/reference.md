@@ -254,3 +254,8 @@ MainActivity.onResume + B面升级/RC刷新监听
 - 曝光成功：`AdBridgeIntegration.onImpression` → `AdReplenishCoordinator` 补货
 - 展示失败：`onShowFailed` → `ad_no_show` + `cancelReplenish`
 - 切后台：`AppForegroundMonitor` 约 200ms 自动 dismiss 插屏（`background_dismiss_ms`）
+
+
+## 应用级请求（2026-06）
+
+详见 [application-level-requests.md](application-level-requests.md)。

@@ -25,6 +25,7 @@ description: >-
 | 对外 API | `AdBridge/.../ext/ActivityAdExt.kt`、`FragmentAdExt.kt` |
 | `MonetizationKit` | 运行时闸门、`init` / `runWhenSdkInitializedOnce` |
 | 远程 JSON 桥 | `AdBridge/.../config/AdRemoteConfigBridge.kt` |
+| 应用级请求入口 | `AdBridge/.../util/ApplicationAdRequests.kt` |
 | 请求链路日志 | `AdBridge/.../utils/AdRequestLog.kt` |
 | AB/RC 编排 | `app/.../bootstrap/PdfAppAdsBootstrap.kt` |
 | 预加载编排 | `app/.../ads/AdPreloadCoordinator.kt` |
@@ -36,6 +37,7 @@ description: >-
 | A 面默认 JSON | `app/src/main/assets/ad_remote_config_default_a.json` |
 
 - **SDK 就绪回调 + 请求时机（必读）**：[sdk-init-callback.md](sdk-init-callback.md)
+- **应用级请求（必读）**：[application-level-requests.md](application-level-requests.md)
 - **全部 preload 时机（大白话）**：[preload-timing.md](preload-timing.md)
 - **A→B 升面页面分发（必读）**：[mode-b-page-gate.md](mode-b-page-gate.md)
 - **开屏 Loading 策略（必读）**：[splash-loading.md](splash-loading.md)
@@ -61,7 +63,7 @@ description: >-
 | **开屏 splash** | 启动 Loading 页 | UMP 后 **`runWhenSdkInitializedOnce` → preloadAd ×1**（见 [sdk-init-callback.md](sdk-init-callback.md)） | Loading 放行后 **`obtainForShow` 有缓存才 show** | **禁止** UMP 后立即 preload；禁止 Splash 内 `MonetizationKit.init` |
 | **插屏 interstitial** | 跳转前、返回前 | **必须** `preloadAd` | `showAd`（**仅缓存**） | 无缓存不展示、不阻塞业务 |
 | **原生 native** | 页面底部/列表穿插 | **必须** `preloadAd` | `bindNativeAd` / `showNativeAd` | onDestroy 自动 destroy |
-| **Banner banner** | 主页底部可折叠 | **无** Loader 预加载 | `FloorziqAd.showBanner` 现场 load | PDF 用官方 collapsible 方案 |
+| **Banner banner** | 主页底部可折叠 | **`MainBannerController.requestLoad` 应用级** | `showCollapsibleBanner` attach 展示 | load 与 show 分离；见 [application-level-requests.md](application-level-requests.md) |
 
 扩展函数在 `ActivityAdExt.kt` / `FragmentAdExt.kt`（`FragmentActivity` 上调用）。
 
@@ -186,6 +188,7 @@ Gradle / Manifest 见 [templates/gradle-snippet.kts.template](templates/gradle-s
 MonetizationKit.prepareBeforeConsent(context)          // RC 管家、前台监听、Debug 测试设备配置（不 initialize）
 AdRemoteConfigBridge.applyDefaultLocalAssetsA(context) // A 面 assets 兜底
 MonetizationKit.init(context) { /* isInit=true；全进程唯一 MobileAds.initialize */ }
+ApplicationAdRequests.wire(applicationScope, context) // 应用级 preload/load
 // 并行：PdfAppAdsBootstrap.run(context) → commit 后 applyByMode
 ```
 
@@ -250,6 +253,7 @@ AI 对每个位置：
 
 **AdRequestLog 关键文案**：
 
+- **`【请求中断】原因=... 中断时刻=...`** — 已发起请求后被打断（协程 cancel、Banner 刷新等）
 - `【预加载跳过】原因=...` — 闸门未过或去重
 - `【展示跳过】原因=无可用缓存` — 插屏/原生未 preload 成功
 - `【预加载成功】` / `【缓存命中】` — 正常
@@ -291,7 +295,7 @@ AI 对每个位置：
 
 0. **开屏 load/preload 多入口**：接入前必须 [开屏调用点清点](#开屏调用点清点门禁接入前强制--须用户确认)，**用户确认调用点后**再改代码
 1. **UMP 后首批 preload（见 [sdk-init-callback.md](sdk-init-callback.md)）**：一个 `runWhenSdkInitializedOnce` → 语言/enter/back + 开屏 → Loading 放行闸 → `obtainForShow`
-2. 插屏/原生：**先 preload，展示只 take 缓存**
+2. 插屏/原生/开屏 preload：**ApplicationAdRequests**（应用级）；展示只 take 缓存 + 页面 lifecycle
 3. **禁止** Splash 协程内 `loadAd(开屏)`、`preloadAdAwait` 链、`AdPreloadCoordinator` 里再 preload 开屏
 4. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例
 5. 注释简体中文；`scene` 写清业务时机便于 Logcat

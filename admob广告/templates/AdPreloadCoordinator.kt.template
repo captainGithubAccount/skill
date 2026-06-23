@@ -1,3 +1,4 @@
+import com.isi.monetization.util.ApplicationAdRequests
 // AdPreloadCoordinator 模板 — 仅 UMP 批 + 进主页/页内 preload；无 Loading 批
 // 详见 ../mode-b-page-gate.md、../preload-timing.md
 
@@ -11,17 +12,17 @@ object AdPreloadCoordinator {
         val scene = "UMP后预加载"
         if (!languageConfigured) {
             if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_INTERSTITIAL)) {
-                activity.preloadAd(AdSense.LANGUAGE_INTERSTITIAL, "$scene-语言插屏")
+                ApplicationAdRequests.preload(AdSense.LANGUAGE_INTERSTITIAL, "$scene-语言插屏")
             }
             if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
-                activity.preloadAd(AdSense.LANGUAGE_NATIVE, "$scene-语言原生")
+                ApplicationAdRequests.preload(AdSense.LANGUAGE_NATIVE, "$scene-语言原生")
             }
         }
         if (PdfAppAdsBootstrap.canShowAd(AdSense.ENTER_INTERSTITIAL)) {
-            activity.preloadAd(AdSense.ENTER_INTERSTITIAL, "$scene-enter")
+            ApplicationAdRequests.preload(AdSense.ENTER_INTERSTITIAL, "$scene-enter")
         }
         if (PdfAppAdsBootstrap.canShowAd(AdSense.BACK_INTERSTITIAL)) {
-            activity.preloadAd(AdSense.BACK_INTERSTITIAL, "$scene-back")
+            ApplicationAdRequests.preload(AdSense.BACK_INTERSTITIAL, "$scene-back")
         }
     }
 

@@ -10,6 +10,15 @@
 - [ ] **禁止** UMP 结束后立刻 `preloadAfterUmpConsent` / 开屏 preload（须等 SDK 回调）
 - [ ] **禁止** `if (!isInit) return` 整批跳过 UMP 后预加载（6a434ef4 旧逻辑）
 
+
+## 应用级请求（2026-06 金样）
+
+- [ ] `MyApplication` 已调用 `ApplicationAdRequests.wire(applicationScope, this)`
+- [ ] 预加载入口为 `ApplicationAdRequests.preload` 或 `activity.preloadAd`（delegate），**非** `lifecycleScope.launch { preloadAdAwait }`
+- [ ] Banner：`requestLoad` 应用级 + `showCollapsibleBanner` 展示 attach
+- [ ] Logcat 可见 `【请求中断】` 语义（与 `【预加载跳过】` 区分）
+- [ ] 详见 [application-level-requests.md](application-level-requests.md)
+
 ## 模块与 Gradle
 
 - [ ] `:AdBridge`、`:admob`、`:AdBase` 已加入工程

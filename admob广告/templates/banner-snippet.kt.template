@@ -1,28 +1,18 @@
-// Banner 广告 — PDF 金样：MainBannerController（可折叠 Banner）
-// 无 Loader 预加载；MainActivity.onResume 现场 load
-// 仅 B 面 + JSON ad_sense=4 + 远程 pdf_ad_config_b 生效
+// Banner — PDF 金样：load 应用级 + show 绑页面
+// 预加载：MainBannerController.requestLoad(applicationContext, scene)
+// 展示：MainBannerController.showCollapsibleBanner(...)
 
-override fun onResume() {
-    super.onResume()
-    if (currentTabIsHome) {
-        MainBannerController.showCollapsibleBanner(
-            activity = this,
-            bannerHost = binding.bannerHost,
-            adContainer = binding.adContainer,
-            forceReload = false,
-        )
-    }
-}
+// 语言页 initView / SDK 批（应用级 load，不绑语言页 destroy）
+MainBannerController.requestLoad(applicationContext, "语言页-折叠Banner预加载")
 
-// B 面升级或 RC 刷新后重载
-PdfAppAdsBootstrap.addOnModeBUpgradedListener {
-    MainBannerController.showCollapsibleBanner(
-        activity = this,
-        bannerHost = binding.bannerHost,
-        adContainer = binding.adContainer,
-        forceReload = true,
-    )
-}
+// Main 容器就绪后 attach 展示
+MainBannerController.showCollapsibleBanner(
+    activity = this,
+    bannerHost = binding.bannerHost,
+    adContainer = binding.adContainer,
+    forceReload = false,
+    scene = "主页Banner-onResume展示",
+)
 
-// Tab 切离 Home：hide(GONE)，不 destroy，切回复用已加载实例
-MainBannerController.hide(binding.bannerHost, binding.adContainer)
+// forceReload → 打 【请求中断】 + clearAppScopeBanner
+MainBannerController.showCollapsibleBanner(..., forceReload = true)
