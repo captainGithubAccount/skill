@@ -1,12 +1,12 @@
 import com.isi.monetization.util.ApplicationAdRequests
-// AdPreloadCoordinator 模板 — 仅 UMP 批 + 进主页/页内 preload；无 Loading 批
+// AdPreloadCoordinator 模板 — UMP 批（语言位，不含 enter/back）+ 进主页/页内/Banner
 // 详见 ../mode-b-page-gate.md、../preload-timing.md
 
 object AdPreloadCoordinator {
 
     private const val TAG = "AdPreload"
 
-    /** UMP 后：语言/enter/back；开屏由 Splash 单次 preloadAd */
+    /** UMP 后：仅语言插屏/原生（未配语言）；不含 enter/back；开屏由 Splash 单次 preloadAd */
     fun preloadAfterUmpConsent(activity: FragmentActivity, languageConfigured: Boolean) {
         if (!MonetizationKit.isInit) return
         val scene = "UMP后预加载"
@@ -18,17 +18,21 @@ object AdPreloadCoordinator {
                 ApplicationAdRequests.preload(AdSense.LANGUAGE_NATIVE, "$scene-语言原生")
             }
         }
-        if (PdfAppAdsBootstrap.canShowAd(AdSense.ENTER_INTERSTITIAL)) {
-            ApplicationAdRequests.preload(AdSense.ENTER_INTERSTITIAL, "$scene-enter")
-        }
-        if (PdfAppAdsBootstrap.canShowAd(AdSense.BACK_INTERSTITIAL)) {
-            ApplicationAdRequests.preload(AdSense.BACK_INTERSTITIAL, "$scene-back")
-        }
     }
 
-    // ❌ 禁止 schedulePreloadAfterLoadingWhenReady / runPreloadAfterLoading / awaitBootstrapAndSdkReady
+    fun preloadBannerOnSplashSdkReady(activity: FragmentActivity) { /* 已配语言冷启 */ }
+    fun preloadBannerOnLanguagePage(activity: FragmentActivity) { /* 首次语言页 initView */ }
+    fun preloadBannerOnMainEntry(activity: FragmentActivity) { /* Main 容器就绪 */ }
 
-    suspend fun preloadOnMainEntry(activity: FragmentActivity) { /* 见金样 */ }
+    // ❌ 禁止 schedulePreloadAfterLoadingWhenReady / runPreloadAfterLoading
+
+    suspend fun preloadOnMainEntry(activity: FragmentActivity) {
+        // enter / BOTTOM_NAV / SHARED_LARGE_NATIVE — 见金样 MainActivity.initView
+    }
+
+    fun preloadBackInterstitialInBackground(host: FragmentActivity, scene: String) {
+        // navigateWithEnterAd 进二级页前 — 非 UMP 批
+    }
 }
 
 // A→B：bindModeBAdGateWhileVisible — 见 ModeBAdGateLifecycle.kt

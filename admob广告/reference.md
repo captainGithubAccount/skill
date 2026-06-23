@@ -25,7 +25,9 @@
 | `loadAd(sense, timeoutMs, scene)` | **开屏管线禁用**；非 Splash 特殊场景 |
 | `takeCachedAd(sense)` | 取缓存不请求 |
 | `showAd(sense, scene) { shown }` | 插屏=仅缓存 |
-| `bindNativeAd(...)` | 原生绑定 |
+| `bindNativeAd(...)` | 原生绑定（**仅消费缓存**；ConvertFinish 等仍用） |
+| `loadNativeForPageBind(sense, scene)` | bind 用：先缓存 → 无则页内 `loadAd`（`skipReplenishOnImpression=true`）→ 再 `preloadAdAwait` |
+| `bindNativeAdInstantIfNeeded(...)` | 列表/二级页：封装 `loadNativeForPageBind` + 展示 |
 | `ensureInterstitialCached` | 语言确认等单点补货 |
 
 Fragment 有同名扩展（`FragmentAdExt.kt`）。
@@ -45,17 +47,42 @@ onCreate/onResume → preloadAd(INTER_X)
 
 PDF enter/back：`AdNavigationCoordinator` 叠概率（`enter_inter_show_probability` / `back_inter_show_probability`）；enter 冷启首次必尝试。
 
-### 原生
+### 原生（PDF 2026-06 · 即时 bind）
 
 ```
-preloadAd(NATIVE_X)
-onResume → bindNativeAd(NATIVE_X, frameLayout, useLargeLayout)
-  ├─ 有缓存 → 填入容器
-  └─ 无缓存 → hideNativeAdContainer() + showSkippedNoCache
+preloadAd(NATIVE_X)                    // 进页备货（仍保留）
+onResume / 列表 bind →
+  loadNativeForPageBind / bindNativeAdInstantIfNeeded
+  ├─ 有缓存 → 填入容器；曝光后 AdReplenishCoordinator 补货
+  ├─ 无缓存 → loadAd「页内即时load」+ skipReplenishOnImpression=true → 展示；曝光 **不**补货
+  └─ load 仍失败 → preloadAdAwait「页内await」→ 再取缓存（缓存路径可补货）
 onDestroy → NativeAd.destroy()（扩展内已注册）
+
+bindNativeAd(...)                      // 仅缓存 bind（如 ConvertFinishActivity）
+  └─ 无缓存 → hide + showSkippedNoCache（不页内 load）
 ```
 
-`SHARED_LARGE_NATIVE`：列表 1/6/11/16 穿插；无缓存 400ms 后重试 bind。
+**禁止**：`postDelayed(400ms)` 轮询 bind（已删除）。
+
+`SHARED_LARGE_NATIVE`：列表穿插；Language / File / Tools / Bookmarks 用 instant bind；ConvertFinish 仍 `bindNativeAd` 仅缓存。
+
+### Banner（PDF 2026-06 · load/show 两阶段）
+
+```
+requestLoad(applicationContext, scene)   // 应用级网络请求（不绑 Language destroy）
+  触发点：
+  ① 已配语言冷启：Splash SDK 批 scene=SDK就绪-直达主页Banner
+  ② 首次语言页 initView：scene=语言页-折叠Banner预加载
+  ③ Main initView bannerHost.post / onResume：scene=进入主页-折叠Banner预加载 或 onResume展示
+showCollapsibleBanner(...)               // Main 容器 attach；Tab 切换复用 bannerReady
+  ├─ bannerReady 且同 adId → 仅显示，不重复 request
+  ├─ loadInFlight 且容器空 → postDelayed(400ms) 等 load 完成再 attach（UI 等待，非 bind 重试）
+  └─ forceReload → requestInterrupted + clearAppScopeBanner + 再 requestLoad
+二级页返回 / AB 升 B → forceReload scene=主页Banner-返回热启重建 / AB面升级重建
+LanguageActivity.onDestroy → MainBannerController.onEarlyLoadHostDestroyed()
+```
+
+Banner **不走** `ApplicationAdRequests` / Loader preload；独立 `MainBannerController.requestLoad`。
 
 ### 开屏（Loading 页 · PDF 金样）
 
@@ -63,8 +90,9 @@ onDestroy → NativeAd.destroy()（扩展内已注册）
 
 ```
 UMP 结束 → runWhenSdkInitializedOnce {
-             preloadAfterUmpConsent（语言/enter/back）
+             preloadAfterUmpConsent（语言位，不含 enter/back）
              preloadAd(LOADING_SPLASH) ×1
+             [已配语言] preloadBannerOnSplashSdkReady
            }
          → 放行闸：≥2s 且 (isReady 或 UMP+10s)
          → obtainForShow：有缓存 show，无缓存跳页
@@ -251,7 +279,8 @@ MainActivity.onResume + B面升级/RC刷新监听
 ## 插屏类共性（PDF）
 
 - 展示：**只** `takeCachedAd`，不现场 load
-- 曝光成功：`AdBridgeIntegration.onImpression` → `AdReplenishCoordinator` 补货
+- 曝光成功：`AdBridgeIntegration.onImpression` → `AdReplenishCoordinator.onFullScreenImpression` → `展示消耗后预加载`（**含语言插屏 LANGUAGE_INTERSTITIAL**，与 enter/back/底栏相同）
+- **同 ad_id 去重**：B 面 `pdf_ad_config_b` 中语言插屏 (3) 与 enter (5) 常共用 ad_id → 后 preload 可能 `requestSkipped`（Loader `shouldSkipInterstitialPreload`）
 - 展示失败：`onShowFailed` → `ad_no_show` + `cancelReplenish`
 - 切后台：`AppForegroundMonitor` 约 200ms 自动 dismiss 插屏（`background_dismiss_ms`）
 

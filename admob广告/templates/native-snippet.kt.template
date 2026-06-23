@@ -1,26 +1,33 @@
-// 原生广告 — PDF 金样：LanguageActivity / FileFragment 等
-// 1. 布局中准备 FrameLayout（如 R.id.native_ad_container）
-// 2. 替换 AdSense；B 专属位须 canShowAd
+// 原生广告 — PDF 金样（2026-06）：即时 bind + 进页 preload
+// 1. 布局 FrameLayout（如 R.id.nativeAdContainer）
+// 2. B 专属位须 canShowAd；进页仍 preloadAd 备货
 
-override fun onCreate(savedInstanceState: Bundle?) {
-    super.onCreate(savedInstanceState)
-    if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
-        preloadAd(AdSense.LANGUAGE_NATIVE, scene = "语言页-预加载原生")
-    }
+// --- 语言页底部（LanguageActivity）---
+if (PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
+    preloadAd(AdSense.LANGUAGE_NATIVE, scene = "语言页-预加载原生")
+}
+// onResume 协程内：
+lifecycleScope.launch {
+    val ad = loadNativeForPageBind(AdSense.LANGUAGE_NATIVE, scene = "语言页原生") as? NativeAd
+    // 无货 → GONE；有货 → ad.showLargeNative { ... }
+    // 页内即时 load 成功：skipReplenishOnImpression=true，曝光不补货
 }
 
-override fun onResume() {
-    super.onResume()
-    if (!PdfAppAdsBootstrap.canShowAd(AdSense.LANGUAGE_NATIVE)) {
-        hideNativeAdContainer(binding.nativeAdContainer)
-        return
-    }
-    bindNativeAd(
-        sense = AdSense.LANGUAGE_NATIVE,
-        container = binding.nativeAdContainer,
-        useLargeLayout = true,
-        scene = "语言页-绑定原生",
-    )
-}
+// --- 列表/二级页大原生（File / Tools / Bookmarks）---
+requireActivity().bindNativeAdInstantIfNeeded(
+    sense = AdSense.SHARED_LARGE_NATIVE,
+    container = nativeAdContainer,
+    useLargeLayout = true,
+    scene = "文件列表穿插原生",
+    onComplete = { loaded -> /* 控制 container 可见性 */ },
+)
 
-// 大原生 SHARED_LARGE_NATIVE：列表穿插 + 无缓存 400ms postDelayed 重试 bind
+// --- 仅缓存 bind（ConvertFinishActivity 等）---
+bindNativeAd(
+    sense = AdSense.SHARED_LARGE_NATIVE,
+    container = binding.nativeAdContainer,
+    useLargeLayout = true,
+    scene = "转换成功页原生",
+)
+
+// 禁止：postDelayed(400ms) 轮询 bind（已删除）

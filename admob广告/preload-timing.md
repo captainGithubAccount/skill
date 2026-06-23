@@ -22,7 +22,7 @@
 | 1 | UMP + SDK 首次就绪（**UMP 批**） | 语言插屏/原生；开屏 1 次（并行）；**不含 enter/back** |
 | 2 | 语言页 **initView** | 主页折叠 **Banner**（隐藏容器提前 load） |
 | 3 | 开屏放行闸 | **不新发** request，只读开屏缓存 show |
-| 4 | 进语言页 onResume | bind 原生，**无货 b.iii** 才 preload |
+| 4 | 进语言页 onResume | bind 原生：`loadNativeForPageBind` / `bindNativeAdInstantIfNeeded`（无缓存 **页内即时 load**，不 400ms 轮询） |
 | 5 | 进 Main initView | enter、底栏插屏、大原生；Banner 挂真实容器 |
 | 6 | 中途升 B | 仅 RESUMED 页 listener 分发 |
 
@@ -43,9 +43,9 @@
 
 | 场景 | 什么时候 request |
 |------|------------------|
-| 首次安装 | **UMP 批**语言两位 + **initView 主页 Banner** + bind 无货 **b.iii** |
+| 首次安装 | **UMP 批**语言两位 + **initView 主页 Banner 提前 requestLoad** + bind **页内即时 load** |
 | 设置入口 | initView **b.ii** preload 语言两位（无 Banner） |
-| 确认离开 | 插屏 ensure → 无货再 load（b.iii） |
+| 确认离开 | 插屏 ensure → 无货再 load；曝光后 **与其它插屏相同**走 `AdReplenishCoordinator` 补货 |
 | 中途升 B | `bindModeBAdGateWhileVisible` |
 
 ---
@@ -55,5 +55,5 @@
 | 广告位 | 预加载时机 | 展示 |
 |--------|------------|------|
 | **enter** | 进 Main `preloadOnMainEntry`；UMP 批 **不含** | `navigateWithEnterAd`；无缓存只跳转+补货 |
-| **back** | **不进 Main 批**；`navigateWithEnterAd` 进二级页前 `applicationScope` | `finishWithBackAd`；展示后 applicationScope 补货 |
-| **Banner** | 直达主页：SDK 批；经语言页：语言 initView；Main initView 挂容器 | Main onResume / Tab 切换复用 |
+| **back** | **不进 Main 批、不进 UMP 批**；`navigateWithEnterAd` 进二级页前 `ApplicationAdRequests.preload` | `finishWithBackAd`；展示后补货 |
+| **Banner** | ① 已配语言：Splash SDK 批 `preloadBannerOnSplashSdkReady` ② 首次语言页 initView `preloadBannerOnLanguagePage` ③ Main initView/onResume `requestLoad` + attach | Main onResume / Tab 切换复用；二级页返回 `forceReload` |

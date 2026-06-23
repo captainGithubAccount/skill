@@ -13,5 +13,6 @@ private fun onConfirmLanguage() {
     lifecycleScope.launch {
         ensureInterstitialCached(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认前补货")
         showAd(AdSense.LANGUAGE_INTERSTITIAL, scene = "语言页-确认插屏") { launchMain() }
+        // 曝光成功 → AdReplenishCoordinator 补货（与其它插屏相同，scene=展示消耗后预加载）
     }
 }

@@ -31,7 +31,7 @@
 
 | 批次 | 触发 | 说明 |
 |------|------|------|
-| **UMP 批** | UMP + SDK 就绪，Splash 页面级并行 | 语言（未选语言）+ enter/back + 开屏 1 次 |
+| **UMP 批** | UMP + SDK 就绪，Splash 页面级并行 | 语言（未选语言）+ 开屏 1 次；已配语言时 + Banner 提前 load；**不含 enter/back** |
 | **进主页** | `MainActivity` initView | `preloadOnMainEntry`、Banner 现场 load |
 | **升 B 页面分发** | `bindModeBAdGateWhileVisible` | 仅 RESUMED 页 |
 | **展示后补货** | `AdReplenishCoordinator` | 曝光消耗后再 preload |

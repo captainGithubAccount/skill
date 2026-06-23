@@ -62,8 +62,8 @@ description: >-
 |------|----------|--------|------|------|
 | **开屏 splash** | 启动 Loading 页 | UMP 后 **`runWhenSdkInitializedOnce` → preloadAd ×1**（见 [sdk-init-callback.md](sdk-init-callback.md)） | Loading 放行后 **`obtainForShow` 有缓存才 show** | **禁止** UMP 后立即 preload；禁止 Splash 内 `MonetizationKit.init` |
 | **插屏 interstitial** | 跳转前、返回前 | **必须** `preloadAd` | `showAd`（**仅缓存**） | 无缓存不展示、不阻塞业务 |
-| **原生 native** | 页面底部/列表穿插 | **必须** `preloadAd` | `bindNativeAd` / `showNativeAd` | onDestroy 自动 destroy |
-| **Banner banner** | 主页底部可折叠 | **`MainBannerController.requestLoad` 应用级** | `showCollapsibleBanner` attach 展示 | load 与 show 分离；见 [application-level-requests.md](application-level-requests.md) |
+| **原生 native** | 页面底部/列表穿插 | **必须** `preloadAd` + bind 时 `loadNativeForPageBind` | `bindNativeAdInstantIfNeeded` / `loadNativeForPageBind`；ConvertFinish 仍 `bindNativeAd`（仅缓存） | 页内即时 load 路径 `skipReplenishOnImpression` 不补货 |
+| **Banner banner** | 主页底部可折叠 | **`MainBannerController.requestLoad` 应用级**（Splash/语言页/Main 多入口） | `showCollapsibleBanner` attach 展示 | load 与 show 分离；见 [application-level-requests.md](application-level-requests.md) |
 
 扩展函数在 `ActivityAdExt.kt` / `FragmentAdExt.kt`（`FragmentActivity` 上调用）。
 
@@ -90,13 +90,13 @@ MonetizationKit.enableFor(sense)
 | id | AdSense | 类型 | A/B | 预加载锚点 | 展示锚点 |
 |----|---------|------|-----|------------|----------|
 | 1 | LOADING_SPLASH | 开屏 | A/B | UMP 后 `runWhenSdkInitializedOnce` → preload ×1（Coordinator **不含**开屏） | Loading 放行后 `obtainForShow` → show 或跳页 |
-| 2 | LANGUAGE_NATIVE | 原生 | 仅B | UMP 后/后台/Language initView；B commit 补货 | Language onResume bind |
-| 3 | LANGUAGE_INTERSTITIAL | 插屏 | 仅B | 同上 + 确认前 ensure | 语言确认 showAd |
-| 4 | HOME_COLLAPSIBLE_BANNER | Banner | 仅B | 无（Main 容器就绪现场 load） | MainActivity Banner |
-| 5 | ENTER_INTERSTITIAL | 插屏 | A/B | UMP 后/后台 preload | navigateWithEnterAd |
-| 6 | BACK_INTERSTITIAL | 插屏 | A/B | 同上 | finishWithBackAd |
+| 2 | LANGUAGE_NATIVE | 原生 | 仅B | UMP 批（未配语言）/ Language preloadLanguageAds | onResume `loadNativeForPageBind` |
+| 3 | LANGUAGE_INTERSTITIAL | 插屏 | 仅B | 同上 + 确认前 ensure | 语言确认 showAd；**曝光后补货**（与其它插屏相同） |
+| 4 | HOME_COLLAPSIBLE_BANNER | Banner | 仅B | Splash SDK 批 / 语言 initView / Main `requestLoad` | MainActivity `showCollapsibleBanner` |
+| 5 | ENTER_INTERSTITIAL | 插屏 | A/B | **进 Main** `preloadOnMainEntry`（UMP 批不含） | navigateWithEnterAd |
+| 6 | BACK_INTERSTITIAL | 插屏 | A/B | 进二级页前 preload（UMP/Main 批均不含） | finishWithBackAd |
 | 7 | BOTTOM_NAV_INTERSTITIAL | 插屏 | 仅B | preloadOnMainEntry | Main 底栏 showAd |
-| 8 | SHARED_LARGE_NATIVE | 大原生 | 仅B | preloadOnMainEntry + 各页 preload | bindNativeAd 多页 |
+| 8 | SHARED_LARGE_NATIVE | 大原生 | 仅B | preloadOnMainEntry + 各页 preload | `bindNativeAdInstantIfNeeded` 多页 |
 
 videodownload 10 位（含热启开屏 4、搜索/引导等）见 [reference.md](reference.md) 对照表。
 
@@ -202,8 +202,9 @@ ApplicationAdRequests.wire(applicationScope, context) // 应用级 preload/load
 
 UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`（`scheduleSplashPreloadOnceWhenSdkReady`），SDK 就绪后依次：
 
-1. `AdPreloadCoordinator.preloadAfterUmpConsent` — 语言插屏/原生、enter/back（与 6a434ef4 同批）  
+1. `AdPreloadCoordinator.preloadAfterUmpConsent` — 语言插屏/原生（**不含 enter/back**）  
 2. `requestSplashPreloadIfNeeded` — 开屏  
+3. `[languageConfigured]` `preloadBannerOnSplashSdkReady` — 直达主页 Banner 提前 load  
 
 **禁止** `if (!isInit) return` 整批跳过 UMP 后预加载；**禁止** Splash 再调 `MonetizationKit.init`。
 
@@ -240,7 +241,7 @@ AI 对每个位置：
 1. `AdSense` 枚举追加一项（id 不重复）
 2. `ad_remote_config_*.json` + Firebase 同步
 3. 若仅 B 面：加入 `modeBExclusive` 集合
-4. 目标页面：`preloadAd` + `bindNativeAd` / `showAd` / Banner 控制器
+4. 目标页面：`preloadAd` + `bindNativeAdInstantIfNeeded` / `loadNativeForPageBind` / `showAd` / Banner 控制器
 5. 无需改 Loader（按 `adType` 自动路由）
 
 ## 日志排查（必读）
@@ -294,10 +295,10 @@ AI 对每个位置：
 ## 关键约定
 
 0. **开屏 load/preload 多入口**：接入前必须 [开屏调用点清点](#开屏调用点清点门禁接入前强制--须用户确认)，**用户确认调用点后**再改代码
-1. **UMP 后首批 preload（见 [sdk-init-callback.md](sdk-init-callback.md)）**：一个 `runWhenSdkInitializedOnce` → 语言/enter/back + 开屏 → Loading 放行闸 → `obtainForShow`
+1. **UMP 后首批 preload（见 [sdk-init-callback.md](sdk-init-callback.md)）**：一个 `runWhenSdkInitializedOnce` → 语言位 + 开屏 + [已配语言] Banner 提前 load → Loading 放行闸 → `obtainForShow`（**不含 enter/back**）
 2. 插屏/原生/开屏 preload：**ApplicationAdRequests**（应用级）；展示只 take 缓存 + 页面 lifecycle
 3. **禁止** Splash 协程内 `loadAd(开屏)`、`preloadAdAwait` 链、`AdPreloadCoordinator` 里再 preload 开屏
-4. Banner：**现场** `FloorziqAd.showBanner`；Tab 切走 GONE、切回复用实例
+4. Banner：**应用级** `MainBannerController.requestLoad`（Splash/语言/Main 多入口）+ `showCollapsibleBanner` attach；Tab 切回复用；`forceReload` 二级页返回/升 B
 5. 注释简体中文；`scene` 写清业务时机便于 Logcat
 6. 订阅用户 `MonetizationKit.isSubs=true` 全局不展示
 7. VPN/代理可能导致 SSL 异常 — 关 VPN 再验

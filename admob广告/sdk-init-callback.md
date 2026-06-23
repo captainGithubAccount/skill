@@ -1,6 +1,6 @@
 # SDK 初始化回调与请求时机（PDF 金样 · 2026-06）
 
-> **一句话**：Application 异步 `MonetizationKit.init` 与 Splash UMP **并行**；UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`，SDK 就绪后统一触发 **UMP 后首批 preload**（语言插屏/原生、enter/back、开屏）；勿在 isInit 前整批 skip。
+> **一句话**：Application 异步 `MonetizationKit.init` 与 Splash UMP **并行**；UMP 结束后 **只注册一次** `runWhenSdkInitializedOnce`，SDK 就绪后统一触发 **UMP 后首批 preload**（语言插屏/原生、开屏、[已配语言] Banner 提前 load）；**不含 enter/back**；勿在 isInit 前整批 skip。
 
 **金样代码**：
 
@@ -27,7 +27,7 @@
 
 | 问题 | 原因 |
 |------|------|
-| UMP 后立刻 preload 漏请求 | `enableFor` 要求 `isInit && isUmpResolved`；旧代码 `if (!isInit) return` 会**整批跳过**语言/enter/back |
+| UMP 后立刻 preload 漏请求 | `enableFor` 要求 `isInit && isUmpResolved`；旧代码 `if (!isInit) return` 会**整批跳过**语言位等 |
 | 在 Splash 再调 `MonetizationKit.init` | 可能与 Application **竞态** duplicate initialize；且 `init { }` 入参在重复 `init()` 时会**再次**执行 |
 | 固定 await 2.5s（videodownload） | 能修竞态但拖慢启动；PDF 金样改用 **状态 + 一次性回调** |
 
@@ -77,7 +77,7 @@ fun runWhenSdkInitializedOnce(block: () -> Unit)
 
 ---
 
-## 4. UMP 后首批 preload 标准编排（开屏 + 语言/enter/back）
+## 4. UMP 后首批 preload 标准编排（开屏 + 语言位 + 可选 Banner）
 
 ### 4.1 注册点：**UMP 结束之后（仅一次 `runWhenSdkInitializedOnce`）**
 
@@ -90,6 +90,9 @@ private fun scheduleSplashPreloadOnceWhenSdkReady(languageConfigured: Boolean) {
     MonetizationKit.runWhenSdkInitializedOnce {
         AdPreloadCoordinator.preloadAfterUmpConsent(activity, languageConfigured)
         requestSplashPreloadIfNeeded()
+        if (languageConfigured) {
+            AdPreloadCoordinator.preloadBannerOnSplashSdkReady(activity)
+        }
     }
 }
 ```
@@ -98,8 +101,11 @@ private fun scheduleSplashPreloadOnceWhenSdkReady(languageConfigured: Boolean) {
 
 | AdSense | 条件 |
 |---------|------|
-| `LANGUAGE_INTERSTITIAL` / `LANGUAGE_NATIVE` | `!languageConfigured`（Loader 层 A 方案 skip；不卡 `canShowAd`） |
-| `ENTER_INTERSTITIAL` / `BACK_INTERSTITIAL` | `canShowAd` |
+| `LANGUAGE_INTERSTITIAL` / `LANGUAGE_NATIVE` | `!languageConfigured` 且 `canShowAd`（B 专属位须 commit 后） |
+| `LOADING_SPLASH` | `requestSplashPreloadIfNeeded`（同回调内，与上表并行） |
+| 已配语言时同批 | `preloadBannerOnSplashSdkReady`（直达主页 Banner 提前 `requestLoad`） |
+
+**UMP 批不含**：`ENTER_INTERSTITIAL`、`BACK_INTERSTITIAL`（enter 在进 Main `preloadOnMainEntry`；back 在 `navigateWithEnterAd` 进二级页前）。
 
 **不在 UMP 前注册**；**禁止** `if (!MonetizationKit.isInit) return` 整批跳过（旧 `preloadAfterUmpConsent`）。
 
@@ -159,7 +165,7 @@ sequenceDiagram
 
 | 场景 | 建议 |
 |------|------|
-| **UMP 后 fire-and-forget 一批**（语言 + enter/back；开屏单次） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce` |
+| **UMP 后 fire-and-forget 一批**（语言位 + 开屏单次 + 可选 Banner；**不含 enter/back**） | **必须**与开屏 **同一** `runWhenSdkInitializedOnce` |
 | Loading 后 `runPreloadAfterLoading` | ❌ **已删除**（Loading 批）；见 [mode-b-page-gate.md](mode-b-page-gate.md) UMP vs Loading |
 | A→B / FC 刷新 | **禁止** Bootstrap 整批 preload；见 [mode-b-page-gate.md](mode-b-page-gate.md) |
 | 进主页 / 语言页后的 preload | 页面 initView / `bindModeBAdGateWhileVisible` |

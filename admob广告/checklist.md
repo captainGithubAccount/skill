@@ -6,7 +6,7 @@
 - [ ] 已向用户输出「开屏调用点清单」表（含 #、文件、API、preload/load/展示分类）
 - [ ] 用户已回复 **「确认调用点」** 或等价书面同意（未确认 **禁止** 写代码）
 - [ ] 开屏 preload 网络入口 **仅 1 处**（`SplashLaunchPipeline.requestSplashPreloadIfNeeded`）
-- [ ] **UMP 后所有 fire-and-forget preload**（语言插屏/原生、enter/back）与开屏 **同一** `runWhenSdkInitializedOnce`（`preloadAfterUmpConsent` + `requestSplashPreloadIfNeeded`）
+- [ ] **UMP 后 fire-and-forget preload**（语言插屏/原生 + 开屏；**不含 enter/back**）与开屏 **同一** `runWhenSdkInitializedOnce`（`preloadAfterUmpConsent` + `requestSplashPreloadIfNeeded`；已配语言时 + `preloadBannerOnSplashSdkReady`）
 - [ ] **禁止** UMP 结束后立刻 `preloadAfterUmpConsent` / 开屏 preload（须等 SDK 回调）
 - [ ] **禁止** `if (!isInit) return` 整批跳过 UMP 后预加载（6a434ef4 旧逻辑）
 
@@ -56,8 +56,8 @@
 - [ ] 用户已提供 [广告位清单模板.md](广告位清单模板.md) 或等价描述
 - [ ] 每个位置已映射 `AdSense` + JSON `ad_sense`
 - [ ] 插屏/原生已配置 **preload 时机**
-- [ ] Banner 已明确「现场 load、无 Loader 预加载」
-- [ ] 原生容器 `FrameLayout` 已存在；无货时容器 GONE
+- [ ] Banner：`requestLoad` 应用级（Splash/语言/Main 多入口）+ `showCollapsibleBanner` attach
+- [ ] 原生：列表/语言页用 `bindNativeAdInstantIfNeeded` / `loadNativeForPageBind`；无 400ms bind 重试
 
 ## JSON
 
@@ -80,7 +80,7 @@
 - [ ] UMP 后 **仅 1 次** 开屏 preload：`splashPreloadRequested` 防重
 - [ ] UMP 后首批 **无** `SDK 未 init，跳过` 整批 return（旧 `preloadAfterUmpConsent`）
 - [ ] Splash **无** `MonetizationKit.init`；Application **仅一处** `MonetizationKit.init`
-- [ ] UMP 后 **无** 在 SDK 回调外直接 `preloadAd(LOADING_SPLASH)` / 语言位 / enter/back
+- [ ] UMP 后 **无** 在 SDK 回调外直接 `preloadAd(LOADING_SPLASH)` / 语言位（enter/back 不在 UMP 批，见 preloadOnMainEntry / navigateWithEnterAd）
 - [ ] Splash 协程 **无** `loadAd(开屏)`、**无** `preloadAdAwait`、**无** `await preloadAfterLoading`
 - [ ] `AdPreloadCoordinator` **不含** `LOADING_SPLASH` preload
 - [ ] Loading 放行：≥2s 动画 +（`isReady` 或 UMP 后 10s）

@@ -1,18 +1,32 @@
-// Banner — PDF 金样：load 应用级 + show 绑页面
-// 预加载：MainBannerController.requestLoad(applicationContext, scene)
-// 展示：MainBannerController.showCollapsibleBanner(...)
+// Banner — PDF 金样：load 应用级 + show 绑 Main 容器
 
-// 语言页 initView / SDK 批（应用级 load，不绑语言页 destroy）
-MainBannerController.requestLoad(applicationContext, "语言页-折叠Banner预加载")
+// --- ① 已配语言冷启：Splash SDK 批（与开屏同 runWhenSdkInitializedOnce）---
+AdPreloadCoordinator.preloadBannerOnSplashSdkReady(activity)
+// scene: SDK就绪-直达主页Banner
 
-// Main 容器就绪后 attach 展示
+// --- ② 首次语言页 initView：提前 load（进 Main 后 attach）---
+AdPreloadCoordinator.preloadBannerOnLanguagePage(this)
+// scene: 语言页-折叠Banner预加载
+
+// --- ③ Main initView / onResume ---
+AdPreloadCoordinator.preloadBannerOnMainEntry(this)
+// 或 MainActivity.refreshHomeBanner → showCollapsibleBanner
+// scene: 进入主页-折叠Banner预加载 / 主页Banner-onResume展示
+
+// 应用级 load（内部 FloorziqAd.preloadCollapsibleBanner）
+MainBannerController.requestLoad(applicationContext, scene)
+
+// Main 容器 attach 展示（不重复 requestLoad 若 bannerReady）
 MainBannerController.showCollapsibleBanner(
     activity = this,
     bannerHost = binding.bannerHost,
-    adContainer = binding.adContainer,
+    adContainer = binding.bannerContainer,
     forceReload = false,
     scene = "主页Banner-onResume展示",
 )
 
-// forceReload → 打 【请求中断】 + clearAppScopeBanner
-MainBannerController.showCollapsibleBanner(..., forceReload = true)
+// 二级页返回 / AB 升 B：forceReload
+MainBannerController.showCollapsibleBanner(..., forceReload = true, scene = "主页Banner-返回热启重建")
+
+// LanguageActivity.onDestroy
+MainBannerController.onEarlyLoadHostDestroyed()

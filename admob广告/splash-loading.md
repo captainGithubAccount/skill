@@ -19,8 +19,9 @@ sequenceDiagram
     S->>UMP: awaitConsent（冷启必须）
     UMP-->>S: isUmpResolved=true
     S->>MK: runWhenSdkInitializedOnce
-    MK->>C: preloadAfterUmpConsent（语言/enter/back）
+    MK->>C: preloadAfterUmpConsent（语言位，不含 enter/back）
     MK->>L: preloadAd LOADING_SPLASH ×1
+    Note over MK,C: 已配语言时同批 preloadBannerOnSplashSdkReady
     loop 放行闸 MIN_ANIM 2s 且 缓存就绪或 UMP+10s
         S->>L: isReady?
     end
@@ -72,7 +73,7 @@ sequenceDiagram
 
 | 方法 | 是否含开屏 | 说明 |
 |------|-----------|------|
-| `preloadAfterUmpConsent` | ❌ **不含** | UMP 批：语言/enter/back；fire-and-forget |
+| `preloadAfterUmpConsent` | ❌ **不含** | UMP 批：仅语言插屏/原生（未配语言）；**不含 enter/back** |
 | ~~`schedulePreloadAfterLoadingWhenReady`~~ | — | ❌ **已删除**（Loading 批） |
 | `SplashLaunchPipeline.scheduleSplashPreloadOnceWhenSdkReady` | ✅ **唯一开屏入口** | 开屏单次 preload（经 SDK 一次性回调） |
 
